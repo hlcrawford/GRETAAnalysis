@@ -50,6 +50,11 @@ def rootcint(target, source, env):
     ok = os.system(command)
     return ok
 
+def remember_pcm(target, source, env):
+    new_target = os.path.splitext(str(target[0]))[0]+'_rdict.pcm'
+    target.append(new_target)
+    return target, source
+
 ## Create construction environment propagating the external environment
 env = Environment(ENV=os.environ, 
       		  CXXCOMSTR = compile_source_message,
@@ -64,69 +69,37 @@ env = Environment(ENV=os.environ,
   		  JAVACCOMSTR = compile_source_message) 
 
 ## Create a rootcint builder and attach it to the environment
-bld = Builder(action=Action(rootcint,root_dictionary_message))
+bld = Builder(action=Action(rootcint,root_dictionary_message), emitter = remember_pcm)
 env.Append(BUILDERS = {'RootCint':bld})
 
 ## Optimization flags ##################################################
-env.Append(CCFLAGS = ['-O2', '-D_FILE_OFFSET_64', '-pg', '-g'], LINKFLAGS=['-pg'])
+env.Append(CCFLAGS = ['-O2', '-D_FILE_OFFSET_64', '-g'], LINKFLAGS=[])
 
 ## Finding dependencies (ROOT)
 try:
     env.ParseConfig('root-config --cflags')
     env.ParseConfig('root-config --glibs')
 except OSError:
-    print("scons: ROOT not found!")
+    print ("scons: ROOT not found!")
     exit(1)
 
-env.Append(CPPPATH='#')
-env.Append(LIBPATH='.')
+env.Append(CPPPATH=['.', './include', './src'])
+env.Append(LIBPATH='./lib')
 
-envStreamer = env.Clone()
+envUnpack = env.Clone()
 
 ## Building GRETINADict and libGRETINA #################################
-gretinaDictTarget = 'src/GRETINADict.cpp'
-gretinaDictHeaders = ['src/GRETINA.h', 'src/GRETINAWavefunction.h', 'src/LinkDefGRETINA.h']
-env.RootCint(gretinaDictTarget, gretinaDictHeaders)
+gretaDictTarget = 'lib/GRETADict.cpp'
+gretaDictHeaders = ['include/GRETA.h', 'include/LinkDefGRETA.h']
+env.RootCint(gretaDictTarget, gretaDictHeaders)
 
-gretinaLibTarget = 'GRETINA'
-gretinaLibSources = ['src/GRETINADict.cpp', 'src/GRETINA.cpp', 
-                     'src/G3Waveform.cpp']                    
-env.SharedLibrary(target = gretinaLibTarget, source = gretinaLibSources, 
+gretaLibTarget = 'lib/GRETA'
+gretaLibSources = ['lib/GRETADict.cpp', 'src/GRETA.cpp']
+env.SharedLibrary(target = gretaLibTarget, source = gretaLibSources, 
                   SHLIBPREFIX='lib')
 
-## Building StreamerDict and libStreamer ####################################
-streamerDictTarget = 'src/streamerDict.cpp'
-streamerDictHeaders = ['src/streamFunctions.h', 'src/LinkDefStreamer.h']
-env.RootCint(streamerDictTarget, streamerDictHeaders)
-
-streamerLibTarget = 'Streamer'
-streamerLibSources = ['src/streamerDict.cpp', 'src/streamFunctions.cpp']
-env.SharedLibrary(target = streamerLibTarget, source = streamerLibSources,
-	          SHLIBPREFIX='lib')
-
-## Building Tau-getter executable ###########################################
-
-tauTarget = 'getTau'
-tauSources = ['src/findTau.cpp']
-envStreamer.Append(LIBS=['Streamer'])
-envStreamer.Program(target = tauTarget, source = tauSources)
-
-## Building Rate-getter executable ###########################################
-
-rateTarget = 'getRate'
-rateSources = ['src/getRate.cpp']
-envStreamer.Append(LIBS=['Streamer'])
-envStreamer.Program(target = rateTarget, source = rateSources)
-
-## Building Streamer executable ###########################################
-
-streamerTarget = 'Analyze'
-streamerSources = ['src/readTrace.cpp']
-envStreamer.Append(LIBS=['GRETINA', 'Streamer'])
-envStreamer.Program(target = streamerTarget, source = streamerSources)
-
-## Build SFB output executable ############################################
-
-codeTarget = 'readGreta'
-codeSources = ['src/readGreta.cpp']
-env.Program(target=codeTarget, source = codeSources)
+## Building Unpack executable ###########################################
+unpackTarget = 'readGreta'
+unpackSources = ['src/readGretaMultiCrystal.cpp', 'src/Globals.cpp']
+envUnpack.Append(LIBS=['GRETA'], LIBPATH=['lib'])
+envUnpack.Program(target = unpackTarget, source = unpackSources)
