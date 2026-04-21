@@ -83,18 +83,18 @@ except OSError:
     print ("scons: ROOT not found!")
     exit(1)
 
-env.Append(CPPPATH=['.', './include', './src'])
+env.Append(CPPPATH=['.', './src', './include'])
 env.Append(LIBPATH='./lib')
 
 envUnpack = env.Clone()
 
 ## Building GRETINADict and libGRETINA #################################
 gretaDictTarget = 'lib/GRETADict.cpp'
-gretaDictHeaders = ['include/GRETA.h', 'include/LinkDefGRETA.h']
+gretaDictHeaders = ['include/GRETA.h', 'include/dptc.h', 'include/SortingStructures.h', 'include/LinkDefGRETA.h']
 env.RootCint(gretaDictTarget, gretaDictHeaders)
 
 gretaLibTarget = 'lib/GRETA'
-gretaLibSources = ['lib/GRETADict.cpp', 'src/GRETA.cpp']
+gretaLibSources = ['lib/GRETADict.cpp', 'src/GRETA.cpp', 'src/SortingStructures.cpp']
 env.SharedLibrary(target = gretaLibTarget, source = gretaLibSources, 
                   SHLIBPREFIX='lib')
 

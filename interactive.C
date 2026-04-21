@@ -170,9 +170,9 @@ Double_t dofit(Double_t ilo=-1, Double_t ihi=-1, const char *name="",char *write
   backlin->SetLineColor(2);
   
   /* Take range passed into fitting routine and convert into bin numbers. */
-  Int_t blo = Int_t (lo / binwidth) + 1;
-  Int_t bhi = Int_t (hi / binwidth) + 1;
-  
+  Int_t blo = Int_t (h->FindBin(lo));
+  Int_t bhi = Int_t (h->FindBin(hi));
+
   /* Assume centroid of the gaussian is the bin with the maximum counts
      that is in range.... */
   Double_t maximum = 0;
@@ -182,11 +182,12 @@ Double_t dofit(Double_t ilo=-1, Double_t ihi=-1, const char *name="",char *write
     if(val > maximum) { maximum = val;  binmax = i; }
   }
 
-  printf("Starting centroid/height = %f/%f\n", maximum, binmax);
-  
   /* Convert bin value back to an xaxis value. */
-  Int_t guess_centroid = binmax * binwidth;
-  
+  Int_t guess_centroid = h->GetBinCenter(binmax);
+
+  // printf("binmax, binwidth, maximum = %f %f %f\n", binmax, binwidth, maximum);
+  printf("Starting centroid/height = %d/%f\n", guess_centroid, maximum);
+    
   /* Create Gaussian for display and intergration purposes. */
   TF1 *gausD = new TF1("gausD", plainGaus, lo, hi, 8);
   gausD->SetLineColor(4);
@@ -238,12 +239,12 @@ Double_t dofit(Double_t ilo=-1, Double_t ihi=-1, const char *name="",char *write
   if (!skewYes) { userfit->FixParameter(3, 0); }
 
   /* Peak Position */
-  userfit->SetParLimits(4, 0.99*binmax, 1.01*binmax);
-  userfit->SetParameter(4, binmax);
+  userfit->SetParLimits(4, 0.99*guess_centroid, 1.01*guess_centroid);
+  userfit->SetParameter(4, guess_centroid);
 
   /* Peak width (sigma) */
-  userfit->SetParLimits(5, binmax*0.0001, binmax*0.02);
-  userfit->SetParameter(5, binmax*0.001);
+  userfit->SetParLimits(5, guess_centroid*0.0001, guess_centroid*0.02);
+  userfit->SetParameter(5, guess_centroid*0.001);
   
   /* Beta for skewness */
   userfit->SetParLimits(6, 0.00001, 12000);
@@ -258,7 +259,7 @@ Double_t dofit(Double_t ilo=-1, Double_t ihi=-1, const char *name="",char *write
 
   /* Perform the total fit within a range, all weights set to 1 
      with loglike method. */
-  h->Fit("userfit","WWLMRQ");
+  h->Fit("userfit","WLMRQ");
   
   /* Retrieve the fit parameters and associated errors. */
   userfit->GetParameters(&params[0]);
@@ -282,6 +283,7 @@ Double_t dofit(Double_t ilo=-1, Double_t ihi=-1, const char *name="",char *write
   peaks->SetParameters(&params[0]);
 
   Double_t maxValue = peaks->GetMaximum();
+  cout << "Maximum value: " << maxValue << endl;
   Double_t fwhm, fwtm;
   Double_t valueLow = peaks->GetX(maxValue*0.5, lo, params[4]);
   Double_t valueHigh = userfit->GetX(maxValue*0.5, params[4], hi);
@@ -373,6 +375,8 @@ Double_t dofit(Double_t ilo=-1, Double_t ihi=-1, const char *name="",char *write
     fitresults[j] = params[j];
     fitresults_err[j] = params_err[j];
   }
+
+  c9->cd(1);
   return 0;
 }
 
@@ -447,7 +451,7 @@ void writeresults(){
   ofstream efile(histoname.c_str(),ios_base::app);
   
   if(!efile){
-    return 1;
+    printf("No file\n");
   }
   else{
     efile << "# " << temp->GetTitle() << " peak at ch " << fitresults[3] << endl;
@@ -476,17 +480,13 @@ void testobjects(Double_t lo=-1, Double_t hi=-1, char *write="n"){
     }
   }
 
-  int binlo, binhi;
+  cout << "Fitting histogram called " << temp->GetName() << endl;
+
   Double_t minx, maxx;
-  
-  binlo = binhi = -1;
   minx = maxx = 0;
-  
-  minx = lo;
-  maxx = hi;
-  
+  minx = lo;  maxx = hi;
   if((maxx - minx) > 1000){
-    return 1;
+    printf("Big spread in range.\n");
   }
   
   dofit(minx, maxx,temp->GetName(), write, 1);
@@ -557,7 +557,7 @@ void DynamicExec1()
     // has been created fit the region and reset the flag "definefitregion"
     if(gPad->GetEvent() == kButton1Down && definefitregion == 1 && axiscom == 0){
       definefitregion = 0;
-      cout << "I will fit now from " << fitregionlo << " " << fitregionhi << endl;
+      cout << "I will fit now from " << gPad->AbsPixeltoX(fitregionlo) << " " << gPad->AbsPixeltoX(fitregionhi) << endl;
       testobjects(gPad->AbsPixeltoX(fitregionlo), gPad->AbsPixeltoX(fitregionhi));
       //dofit(gPad->AbsPixeltoX(fitregionlo),gPad->AbsPixeltoX(fitregionhi),h->GetName());
       
