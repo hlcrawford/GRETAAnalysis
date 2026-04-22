@@ -193,38 +193,50 @@ int main (int argc, char *argv[]) {
     multParts = 1;
   } 
 
-  Int_t nParts = 120;
-  Int_t parts[120] = {0};
-  for (Int_t i=0; i<120; i++) {
-    parts[i] = i+1;
-  }
+  Int_t nFiles = 0;
+  vector<Int_t> runNumList;
+  vector<Int_t> runNumListEndNum;
   
   if (multParts && ctrl->holeNum >= 1) { // One Quad Only
-    nParts = 4;
-    parts[3] = ctrl->holeNum*4;
-    parts[2] = parts[3]-1;
-    parts[1] = parts[2]-1;
-    parts[0] = parts[1]-1;
-    // printf("%d %d %d %d\n", parts[0], parts[1], parts[2], parts[3]);
+    nFiles = 4;
+    runNumList.push_back(ctrl->holeNum*4);
+    runNumList.push_back(ctrl->holeNum*4 - 1);
+    runNumList.push_back(ctrl->holeNum*4 - 2);
+    runNumList.push_back(ctrl->holeNum*4 - 3);
   }
     
-  Int_t partsB[120] = {1};
   int64_t bytesInFile = 0;
-  Int_t nFiles = 0;
+
   if (multParts == 0) {
     bytesInFile = (int64_t) fileStatus.st_size;
     cout << "Input data file size is " << (Float_t)bytesInFile/1024./1024./1024. << " GB\n\n";
   } else if (multParts == 1) {
-    for (Int_t mFile=0; mFile<nParts; mFile++) {
-      for (Int_t endNum = 1; endNum<1000; endNum++) {
-	TString fName = ctrl->inputFile;
-	fName += Form("%d_%d", parts[mFile], endNum);	
-	if (stat(fName.Data(), &fileStatus) == 0) {
-	  partsB[mFile] = endNum;
-	  bytesInFile += (int64_t)fileStatus.st_size;
-	  nFiles++;
-	  endNum = 1000;
-	  printf("%s\n", fName.Data());
+    if (nFiles > 0) {
+      for (Int_t n=0; n<nFiles; n++) {
+	for (Int_t endNum = 1; endNum<1000; endNum++) {
+	  TString fName = ctrl->inputFile;
+	  fName += Form("%d_%d", runNumList[n], endNum);	
+	  if (stat(fName.Data(), &fileStatus) == 0) {
+	    runNumListEndNum.push_back(endNum);
+	    bytesInFile += (int64_t)fileStatus.st_size;
+	    endNum = 1000;
+	    printf("%s\n", fName.Data());
+	  }
+	}
+      }
+    } else {
+      for (Int_t n=1; n<121; n++) {
+	for (Int_t endNum = 1; endNum<1000; endNum++) {
+	  TString fName = ctrl->inputFile;
+	  fName += Form("%d_%d", n, endNum);	
+	  if (stat(fName.Data(), &fileStatus) == 0) {
+	    runNumList.push_back(n);
+	    runNumListEndNum.push_back(endNum);
+	    bytesInFile += (int64_t)fileStatus.st_size;
+	    nFiles++;
+	    endNum = 1000;
+	    printf("%s\n", fName.Data());
+	  }
 	}
       }
     }
@@ -236,19 +248,19 @@ int main (int argc, char *argv[]) {
   FILE *inf;
 
   Int_t nRuns = 1;
-  if (multParts==1) { nRuns = nParts; }
+  if (multParts==1) { nRuns = nFiles; }
   
   long long int firstTS = 0;
   
   for (Int_t mm = 0; mm<nRuns; mm++) {
     if (nRuns == 1) {
       inf = fopen(ctrl->inputFile.Data(), "r");
-      printf("Opened file - %s\n", ctrl->inputFile.Data());
+      printf("\nOpened file - %s\n", ctrl->inputFile.Data());
     } else {
       TString fName = ctrl->inputFile;
-      fName += Form("%d_%d", parts[mm], partsB[mm]);
+      fName += Form("%d_%d", runNumList[mm], runNumListEndNum[mm]);
       inf = fopen(fName.Data(), "r");
-      printf("Opened file - %s\n", fName.Data());
+      printf("\nOpened file - %s\n", fName.Data());
     }
         
     Int_t siz = 0;
@@ -421,7 +433,7 @@ void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt) {
 	printf("    TS:       %lld\n", rHeader.timestamp);
 	printf("    Checksum: %lli\n", rHeader.checksum);
       }
-      if (rHeader.version == 2 && rHeader.flags == 0 && rHeader.type == 3) {
+      if (rHeader.version == 2 && rHeader.flags == 0 && rHeader.type == 4) {
 	printf("Recovered after bad header - %d\n", i);
 	GetData(inf, lastEvt);
 	success = 1;

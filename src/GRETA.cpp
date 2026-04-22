@@ -1,7 +1,7 @@
 #include "GRETA.h"
 
 #define DEBUG 0
-#define KEEP_WAVEFORMS 1
+#define KEEP_WAVEFORMS 0
 
 ClassImp(rotationMatrix);
 ClassImp(gretaWaveformMsg);

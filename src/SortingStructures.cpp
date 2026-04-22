@@ -57,7 +57,7 @@ Int_t controlVariables::InterpretCommandLine(int argc, char *argv[]) {
       i+=2;
     } else if (strcmp(argv[i], "-calibrationRun") == 0) {
       calibrationRun = 1;
-      i+=2;    
+      i++;    
     } else {
       cout << "Error -- unrecognized input flag: " << argv[i] << endl;
       return -1;
