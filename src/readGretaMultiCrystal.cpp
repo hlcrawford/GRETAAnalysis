@@ -50,9 +50,9 @@ using namespace std;
 /*****************************************************/
 void PrintHelpInformation();
 
-void GetData(FILE* inf, Int_t lastLength);
+void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum);
 void SkipData(FILE *inf, UShort_t junk[]);
-void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt);
+void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum);
 /*****************************************************/
 
 
@@ -65,11 +65,11 @@ void breakhandler(int dummy) {
 }
 
 void progressB(int pct) {
+  string bar;
+  struct winsize uk;
   if (ISATTY(FILENO(stdout))) {
-    string bar;
-    struct winsize uk;
     if (ioctl(0, TIOCGWINSZ, &uk) != 0) {
-      exit(1);
+      exit;
     }
     int wdt = uk.ws_col - 20;
     if (wdt < 5) { wdt = 5; }
@@ -171,17 +171,8 @@ int main (int argc, char *argv[]) {
   if (!ctrl->calibrationRun) {
     gdata->Branch("g3", "g3OUT", &(gret->g3Out));
     gdata->Branch("g2", "g2OUT", &(gret->g2Out));
-  } else {
-    for (Int_t i=0; i<121; i++) {
-      for (Int_t j=0; j<4; j++) {
-	gret->ccSpec[i][j] = new TH1F(Form("xtal%dccSpec%d", i, j), Form("xtal%dccSpec%d", i, j), 10000, 0, 3000/gret->gain[i][j+36]);
-      }
-      for (Int_t j=0; j<36; j++) {
-	gret->segSpec[i][j] = new TH1F(Form("xtal%dsegSpec%d", i, j), Form("xtal%dsegSpec%d", i, j), 10000, 0, 3000/gret->gain[i][j]);
-      }
-    }
   }
-    
+  
   unsigned char buf[65536];
   UShort_t junk[8192];
 
@@ -251,6 +242,8 @@ int main (int argc, char *argv[]) {
   if (multParts==1) { nRuns = nFiles; }
   
   long long int firstTS = 0;
+
+  Short_t currentPercentage = 0, lastPercentage = -1;
   
   for (Int_t mm = 0; mm<nRuns; mm++) {
     if (nRuns == 1) {
@@ -271,6 +264,7 @@ int main (int argc, char *argv[]) {
     long long int deltaEvent = 0;
 
     Int_t lastEvtLength = 0;
+    Int_t lastSeqNum = 0;
     
     Int_t TSreports = 0;
     
@@ -311,24 +305,27 @@ int main (int argc, char *argv[]) {
       
       if (abs(deltaEvent) < EB_DIFF_TIME) {
 	
-	GetData(inf, lastEvtLength);
+	GetData(inf, lastEvtLength, lastSeqNum);
 	//printf("Returned from GetData\n");
 	bytesRead += rHeader.length;
 	
       } else {
 	
 	if (!ctrl->calibrationRun) { gdata->Fill(); }
+	if (ctrl->calibrationRun) { gret->fillHistos(); }
 	gret->Reset();
 	currTS = rHeader.timestamp;
 	deltaEvent = (Float_t)(rHeader.timestamp - currTS);
 	
-	GetData(inf, lastEvtLength);
+	GetData(inf, lastEvtLength, lastSeqNum);
 	bytesRead += rHeader.length;
       }
 
       lastEvtLength = rHeader.length;
+      lastSeqNum = rHeader.seqnum;
       
-      if (bytesRead%2000 == 0) { progressB(100*bytesRead/bytesInFile); }    
+      currentPercentage = 100*bytesRead/bytesInFile;
+      if (currentPercentage != lastPercentage) { progressB(currentPercentage); lastPercentage = currentPercentage; }
       siz = fread(&rHeader, sizeof(struct routingHdr), 1, inf);
       bytesRead += sizeof(struct routingHdr);
       
@@ -336,19 +333,29 @@ int main (int argc, char *argv[]) {
   } /* Loop over run segments */
   
   if (!ctrl->calibrationRun) { gdata->Write(); }
-  if (ctrl->calibrationRun) {
-    for (Int_t i=1; i<121; i++) {
-      for (Int_t j=0; j<4; j++) {
-      	gret->ccSpec[i][j]->Write();
-      }
-      for (Int_t j=0; j<36; j++) {
-	gret->segSpec[i][j]->Write();
-      }
-    }
-  }
+  if (ctrl->calibrationRun) { gret->gHist.writeHistos(); }
+
   fOut->Write();
   fOut->Close();
 
+  for (Int_t i=0; i<121; i++) {
+    if (gret->eventCnt[i] > 0) {
+      printf("\n Crystal %d - total events %d", i, gret->eventCnt[i]);
+    }
+    if (gret->mode3TooLong[i] > 0) {
+      printf("\n --> Crystal %d - %d mode3 events over frame size", i, gret->mode3TooLong[i]);
+    }
+    if (gret->seqNumOOO[i] > 0) {
+      printf("\n --> Crystal %d - %d sequence numbers out of order", i, gret->seqNumOOO[i]);
+    }
+    if (gret->timesSeqNumSkipped[i] > 0) {
+      printf("\n --> Crystal %d - %d times sequence numbers skipped", i, gret->timesSeqNumSkipped[i]);
+    }
+    if (gret->seqNumSkipped[i] > 0) {
+      printf("\n --> Crystal %d - %d sequence numbers skipped", i, gret->seqNumSkipped[i]);
+    }
+  }
+  
   //std::cout << "\n --> nG2 " << gret->ng2 << std::endl;
   //long long int delta = (rHeader.timestamp-firstTS);
   //Float_t lengthInS = (Float_t)delta / 100000000.;
@@ -359,7 +366,7 @@ int main (int argc, char *argv[]) {
   return 0;
 }
 
-void GetData(FILE* inf, Int_t lastLength) {
+void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
   UShort_t junk[8192];
 
   // printf("In GetData - %d\n", rHeader.type);
@@ -371,6 +378,24 @@ void GetData(FILE* inf, Int_t lastLength) {
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSubType = rHeader.subtype;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSequence = rHeader.seqnum;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhTS = rHeader.timestamp;
+      gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhLength = rHeader.length;
+      if (gret->lastSeqNum[rHeader.subtype] == -1) {
+	gret->lastSeqNum[rHeader.subtype] = rHeader.seqnum;
+      } else {
+	Int_t deltaSeqNum = rHeader.seqnum - gret->lastSeqNum[rHeader.subtype];
+	if (deltaSeqNum < 1) {
+	  printf("Crystal %d - sequence numbers out of order.  Previous %d, now %d\n", rHeader.subtype,
+		 gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  gret->seqNumOOO[rHeader.subtype]++;
+	} else if (deltaSeqNum > 1) {
+	  printf("Crystal %d - sequence numbers skipped.  Previous %d, now %d\n", rHeader.subtype,
+		 gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  gret->seqNumSkipped[rHeader.subtype] += (deltaSeqNum-1);
+	  gret->timesSeqNumSkipped[rHeader.subtype]++;
+	}
+	gret->lastSeqNum[rHeader.subtype] = rHeader.seqnum;
+      }
+      printf("SN: %d\n", gret->lastSeqNum[rHeader.subtype]);
     }
     break;
   case 4:
@@ -379,6 +404,32 @@ void GetData(FILE* inf, Int_t lastLength) {
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSubType = rHeader.subtype;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSequence = rHeader.seqnum;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhTS = rHeader.timestamp;
+      gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhLength = rHeader.length;
+      gret->eventCnt[rHeader.subtype]++;
+      if (gret->lastSeqNum[rHeader.subtype] == -1) {
+	gret->lastSeqNum[rHeader.subtype] = rHeader.seqnum;
+	if (1) 	printf("\n Crystal %d - first sequence number in file %d\n", rHeader.subtype, rHeader.seqnum);
+      } else {
+	Int_t deltaSeqNum = rHeader.seqnum - gret->lastSeqNum[rHeader.subtype];
+	if (gret->lastSeqNum[rHeader.subtype] == 65535) {
+	  deltaSeqNum = rHeader.seqnum + 65536 - gret->lastSeqNum[rHeader.subtype];
+	}
+	if (deltaSeqNum < 1) {
+	  if (1) {
+	    printf("\nCrystal %d - sequence numbers out of order.  Previous %d, now %d\n", rHeader.subtype,
+		   gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  }
+	  gret->seqNumOOO[rHeader.subtype]++;
+	} else if (deltaSeqNum > 1) {
+	  if (1) {
+	    printf("Crystal %d - sequence numbers skipped.  Previous %d, now %d\n", rHeader.subtype,
+		   gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  }
+	  gret->seqNumSkipped[rHeader.subtype] += (deltaSeqNum-1);
+	  gret->timesSeqNumSkipped[rHeader.subtype]++;
+	}
+	gret->lastSeqNum[rHeader.subtype] = rHeader.seqnum;
+      }
     }
     break;
   case 2:
@@ -394,7 +445,7 @@ void GetData(FILE* inf, Int_t lastLength) {
     {
       cout << "Routing Header type not recognized: " << rHeader.type << endl;
       // SkipData(inf, junk);
-      LookForGoodData(inf, junk,lastLength);
+      LookForGoodData(inf, junk,lastLength, lastSeqNum);
     }
   }
 
@@ -408,13 +459,19 @@ void SkipData(FILE *inf, UShort_t junk[]) {
   }
 }
 
-void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt) {
-  printf("Last Event Length - %d\n", lastEvt);
+void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum) {
+  printf("Last Event Length = %d, last sequence number = %d\n", lastEvt, lastSeqNum);
+
+  // This happens when the last event was > 9000 (frame size).
+  // It gets truncated, so we know how far back to go
+  Int_t startSearch = 9000 - lastEvt;
+  printf("--> starting search for good event at %d + routing header length from here.\n", startSearch);
   
   fseek(inf, -1*(sizeof(struct routingHdr)), SEEK_CUR);
+  fseek(inf, startSearch, SEEK_CUR);
   Int_t success = 0;
   
-  for (Int_t i=0; i<lastEvt*4; i++) {
+  for (Int_t i=startSearch; i<lastEvt*4; i++) {
     if (!success) {
       Int_t siz = fread(&rHeader, sizeof(struct routingHdr), 1, inf);
       rHeader.seqnum = ntohs(rHeader.seqnum);
@@ -434,8 +491,8 @@ void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt) {
 	printf("    Checksum: %lli\n", rHeader.checksum);
       }
       if (rHeader.version == 2 && rHeader.flags == 0 && rHeader.type == 4) {
-	printf("Recovered after bad header - %d\n", i);
-	GetData(inf, lastEvt);
+	printf("Recovered after bad header with data at %d (sequence number = %d)\n", i, rHeader.seqnum);
+	GetData(inf, lastEvt, lastSeqNum);
 	success = 1;
       } else {
 	fseek(inf, -(sizeof(struct routingHdr)-1), SEEK_CUR);
@@ -450,7 +507,11 @@ void PrintHelpInformation() {
   printf("\n");
   printf("Usage: readGreta <Usage Flags> -f <InputFileWithPath> -rootFile <ROOTOutputName>\n");
   printf("     Valid usage flags: -readCal <calFileName>\n");
+  printf("                        -calibrationRun (fills calibration histograms, no Tree)\n");
   printf("                        -hole <X=1 to 120>  (for analyzing the files from a single Quad only if data is taken crystal-wise)");
   printf("\n");
+  printf("  Note - if you give a path to a run with many subfiles, just give the first part of the file name (e.g. the part\n");
+  printf("         that tab-completes and it will scan ALL files.  If you specify a hole number it will only scan the \n");
+  printf("         corresponding four files (if present).  If after '-f' you give a complete filename it will only scan that.\n");
 }
 

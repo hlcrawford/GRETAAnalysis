@@ -654,23 +654,66 @@ void g2OUT::Reset() {
 
 UInt_t g2OUT::crystalMult() { return xtals.size(); } 
 
+gHistos::gHistos() {
+  for (Int_t i=0; i<121; i++) {
+    for (Int_t j=0; j<4; j++) {
+      eRawCC[i][j] = NULL;
+    }
+    for (Int_t j=0; j<36; j++) {
+      eRawSeg[i][j] = NULL;
+    }
+  }
+}
+
+gHistos::~gHistos() { ; }
+
+void gHistos::writeHistos() {
+  for (Int_t i=0; i<121; i++) {
+    for (Int_t j=0; j<4; j++) {
+      if (eRawCC[i][j]!=NULL) { eRawCC[i][j]->Write(); eRawCC[i][j]->Delete(); }
+    }
+    for (Int_t j=0; j<36; j++) {
+      if (eRawSeg[i][j]!=NULL) { eRawSeg[i][j]->Write(); eRawSeg[i][j]->Delete(); }
+    }
+  }    
+}
+
+void GRETA::fillHistos() {
+  for (UInt_t xtal=0; xtal<g3Out.xtals.size(); xtal++) {
+    Int_t id = g3Out.xtals[xtal].rhSubType;
+    for (Int_t i=0; i<4; i++) {
+      if (!gHist.eRawCC[id][i]) {
+	gHist.eRawCC[id][i] = new TH1F(Form("eRawCC_%d_%d", id, i), Form("eRawCC_%d_%d", id, i), 10000, 0, 3000/gain[id][i+36]);
+      } else { ; }
+      gHist.eRawCC[id][i]->Fill(g3Out.xtals[xtal].ener[i+36]/128.);
+    }
+    for (Int_t i=0; i<36; i++) {
+      if (!gHist.eRawSeg[id][i]) {
+	gHist.eRawSeg[id][i] = new TH1F(Form("eRawSeg_%d_%d", id, i), Form("eRawSeg_%d_%d", id, i), 10000, 0, 3000/gain[id][i+36]);
+      } else { ; }
+      gHist.eRawSeg[id][i]->Fill(g3Out.xtals[xtal].ener[i]/128.);
+    }					    
+  }
+}
+      
 void GRETA::Initialize(controlVariables *ctrl) {
   ng2 = 0;
 
   ReadSegmentCenters("gretaCalibrations/segmentCenters.dat");
 
   if (ctrl->calibrationRun) {
-    for (Int_t i=0; i<121; i++) {
-      for (Int_t j=0; j<4; j++) {
-	ccSpec[i][j] = new TH1F(Form("xtal%dccSpec%d", i, j), Form("xtal%dccSpec%d", i, j), 10000, 0, 3000/gain[i][j+36]);
-      }
-      for (Int_t j=0; j<36; j++) {
-	segSpec[i][j] = new TH1F(Form("xtal%dsegSpec%d", i, j), Form("xtal%dsegSpec%d", i, j), 10000, 0, 3000/gain[i][j]);
-      }
-    }
     doingACalibration = 1;
   } else {
     doingACalibration = 0;
+  }
+
+  for (Int_t i=0; i<121; i++) {
+    lastSeqNum[i] = -1;
+    seqNumOOO[i] = 0;
+    seqNumSkipped[i] = 0;
+    timesSeqNumSkipped[i] = 0;
+    eventCnt[i] = 0;
+    mode3TooLong[i] = 0;
   }
   
 }
@@ -728,6 +771,14 @@ Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
   if (DEBUG) {
     printf("Entering getMode3: %d %d %d\n", evtLength, subType, type);
   }
+
+  if (evtLength > 9000) {
+    if (DEBUG) {
+      printf("GetMode3: Long event length %d - over frame size.\n", evtLength);
+      printf("Will skipping waveforms, under assumption it is not all here.\n");
+    }
+    mode3TooLong[subType]++;
+  }
     
   siz = fread(&wform, 1, sizeof(struct gretaWaveformMsg), inf);
   
@@ -742,7 +793,7 @@ Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
     for (int i=0; i<40; i++) { 
       printf("  Raw energy %d: %d\n", i, ntohl(wform.ener[i]));
     }  
-    //  std::cin.get(); 
+    std::cin.get(); 
   } 
 
   g3X.Clear();
@@ -770,67 +821,64 @@ Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
   // dT[subType]->Fill(g3X.hist_corr[1][1]);
   for (Int_t i=36; i<40; i++) {
     g3X.ccE.push_back((g3X.ener[i]/128.)*gain[subType][i] + offset[subType][i]);
-    if (doingACalibration) {
-      ccSpec[subType][i-36]->Fill((g3X.ener[i]/128.));
-    }
   }
   for (Int_t i=0; i<36; i++) {
     g3X.segE.push_back((g3X.ener[i]/128.)*gain[subType][i] + offset[subType][i]);
-    if (doingACalibration) {
-      segSpec[subType][i]->Fill((g3X.ener[i]/128.));
-    }
   }
 
-  vector<int16_t> itr;
-  
-  if (KEEP_WAVEFORMS) {
-    if (type==3) { // Uncompressed waveforms, type 3, need to propagate this forward
-      int16_t trace[5000];
-      if (DEBUG) {
-	printf("Getting uncompressed waveforms.\n");
-      }
-      for (Int_t i=0; i<40; i++) {
-	if (DEBUG) { printf("Segment %d\n", i); }
-	siz = fread(trace, 2, g3X.trLen, inf);
-	for (Int_t j=0; j<g3X.trLen; j++) {
-	  itr.push_back(ntohs(trace[j]));
-	  if (DEBUG) {
-	    printf("  %d  %d\n", j, itr.back());
+  if (evtLength <= 9000) {
+    vector<int16_t> itr;
+    if (KEEP_WAVEFORMS) {
+      if (type==3) { // Uncompressed waveforms, type 3, need to propagate this forward
+	int16_t trace[5000];
+	if (DEBUG) {
+	  printf("Getting uncompressed waveforms.\n");
+	}
+	for (Int_t i=0; i<40; i++) {
+	  if (DEBUG) { printf("Segment %d\n", i); }
+	  siz = fread(trace, 2, g3X.trLen, inf);
+	  for (Int_t j=0; j<g3X.trLen; j++) {
+	    itr.push_back(ntohs(trace[j]));
+	    if (DEBUG) {
+	      printf("  %d  %d\n", j, itr.back());
+	    }
 	  }
+	  g3X.tr.push_back(itr);
+	  itr.clear();
 	}
-	g3X.tr.push_back(itr);
-	itr.clear();
-      }
-    } else if (type==4) { // Compressed waveforms, type 4
-      /* Get total compressed length of waveforms */
-      Int_t sumCompressedLengths = 0;
-      uint16_t sumDecompressionErrs = 0;
-      for (Int_t i=0; i<40; i++) {
-	sumCompressedLengths += ntohs(wform.wfLength[i]);
-      }
-      if (sumCompressedLengths*4 != evtLength - sizeof(struct gretaWaveformMsg)) {
-	printf("Compressed waveform lengths do not match expected, %u != %lu\n", sumCompressedLengths*4, evtLength-sizeof(struct gretaWaveformMsg));
-      }
-      uint32_t wfData[16400];
-      fread(wfData, 4, sumCompressedLengths, inf);
-      for (Int_t i=0; i<sumCompressedLengths; i++) {
-      	wfData[i] = ntohl(wfData[i]);
-      }
-      uint32_t *temp32 = (wfData);
-      for (Int_t ch=0; ch<40; ch++) {
-	int16_t trTemp[5000] = {0};
-	unsigned char* tmp = (unsigned char*)(trTemp);
-	sumDecompressionErrs += dptc_unpack16(temp32, ntohs(wform.wfLength[ch]), (uint16_t*)( &trTemp ), g3X.trLen, 16);
-	for (Int_t l=0; l<g3X.trLen; l++) {
-	  itr.push_back(trTemp[l]);
+      } else if (type==4) { // Compressed waveforms, type 4
+	/* Get total compressed length of waveforms */
+	Int_t sumCompressedLengths = 0;
+	uint16_t sumDecompressionErrs = 0;
+	for (Int_t i=0; i<40; i++) {
+	  sumCompressedLengths += ntohs(wform.wfLength[i]);
 	}
-	g3X.tr.push_back(itr);
-	itr.clear();
-	temp32 += ntohs(wform.wfLength[ch]);      
+	if (sumCompressedLengths*4 != evtLength - sizeof(struct gretaWaveformMsg)) {
+	  printf("Compressed waveform lengths do not match expected, %u != %lu\n", sumCompressedLengths*4, evtLength-sizeof(struct gretaWaveformMsg));
+	}
+	uint32_t wfData[16400];
+	fread(wfData, 4, sumCompressedLengths, inf);
+	for (Int_t i=0; i<sumCompressedLengths; i++) {
+	  wfData[i] = ntohl(wfData[i]);
+	}
+	uint32_t *temp32 = (wfData);
+	for (Int_t ch=0; ch<40; ch++) {
+	  int16_t trTemp[5000] = {0};
+	  unsigned char* tmp = (unsigned char*)(trTemp);
+	  sumDecompressionErrs += dptc_unpack16(temp32, ntohs(wform.wfLength[ch]), (uint16_t*)( &trTemp ), g3X.trLen, 16);
+	  for (Int_t l=0; l<g3X.trLen; l++) {
+	    itr.push_back(trTemp[l]);
+	  }
+	  g3X.tr.push_back(itr);
+	  itr.clear();
+	  temp32 += ntohs(wform.wfLength[ch]);      
+	}
       }
+    } else {
+      fseek(inf, (evtLength-sizeof(struct gretaWaveformMsg)), SEEK_CUR);
     }
   } else {
-    fseek(inf, (evtLength-sizeof(struct gretaWaveformMsg)), SEEK_CUR);
+    fseek(inf, (9000-sizeof(struct gretaWaveformMsg)), SEEK_CUR);
   }
 
   analyzeMode3(&g3X);

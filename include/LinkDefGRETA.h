@@ -25,6 +25,8 @@
 #pragma link C++ class vector<g2IntPts>+;
 #pragma link C++ class vector<g2CrystalEvent>+;
 
+#pragma link C++ class gHistos+;
+
 #pragma link C++ class GRETA+;
 
 #endif
