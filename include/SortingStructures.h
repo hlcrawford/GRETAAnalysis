@@ -22,10 +22,17 @@ class controlVariables : public TObject {
   Int_t specifyCalibration;
   TString calibrationFile;
   TString inputFile;
+  Int_t fileList;
+  TString fileListFile;
   TString rootFile;
   Int_t config;
   Int_t holeNum;
   Int_t calibrationRun;
+  Int_t superPulse;
+  TString spXtalkFile;
+  Int_t spLowE;
+  Int_t spHighE;
+  Int_t keepWaveforms;
   
  public:
   controlVariables();

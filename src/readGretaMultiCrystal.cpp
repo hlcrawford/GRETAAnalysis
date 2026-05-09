@@ -29,8 +29,7 @@
 #include "Globals.h"
 #include "SortingStructures.h"
 
-
-//#include "GRETA.h"
+#include "GRETA.h"
 
 using namespace std;
 
@@ -50,9 +49,9 @@ using namespace std;
 /*****************************************************/
 void PrintHelpInformation();
 
-void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum);
+void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum, controlVariables *ctrl);
 void SkipData(FILE *inf, UShort_t junk[]);
-void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum);
+void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum, controlVariables *ctrl);
 /*****************************************************/
 
 
@@ -128,22 +127,13 @@ int main (int argc, char *argv[]) {
   gret = new GRETA();
   gret->Initialize(ctrl);
 
-  gret->rot.ReadMatrix("crmat.dat");
-  
-  //  gretaWaveformMsg wform;
-
-  float ccEnergy[4];
-  float segEnergy[36];
-  float bl[40];
-  vector<float> pz;
-  float sumA = 0.; float sumB = 0.;
-  int16_t trReOrder[NUM_CHAN][512]; 
-
   for (Int_t i=0; i<121; i++) {
     for (Int_t j=0; j<40; j++) {
-      gret->gain[i][j] = 0.08; // Nominal for segments etc.
+      gret->gain[i][j] = 0.12; // Nominal for segments etc.
       gret->offset[i][j] = 0.0;
-      if (j==37) {
+      if (j==36) {
+	gret->gain[i][j] = 0.08;
+      } else if (j==37) {
 	gret->gain[i][j] = 0.032;
       } else if (j==38) {
 	gret->gain[i][j] = 0.016;
@@ -156,106 +146,149 @@ int main (int argc, char *argv[]) {
   if (ctrl->specifyCalibration) {
     gret->readGRETACalibration(ctrl->calibrationFile);
   }
-
-  /* I think I don't need this anymore */  
-  int mult = 0;
-  float cfdTime = -1.;
-  int data4net[36] = {0};
-  float averageTrace[40][4096];
-  int averageTraceINT[40][4096];
-  float traceGain[40] = {0.0};
-  
-  /* Initialize ROOT output */
-  TFile *fOut = new TFile(ctrl->rootFile.Data(), "RECREATE");
-  TTree *gdata = new TTree("gdata", "gdata");
-  if (!ctrl->calibrationRun) {
-    gdata->Branch("g3", "g3OUT", &(gret->g3Out));
-    gdata->Branch("g2", "g2OUT", &(gret->g2Out));
+  if (ctrl->superPulse) {
+    gret->sp.Initialize(ctrl);
   }
   
+  /* Initialize ROOT output */
+  TFile *fOut; 
+  TTree *gdata; 
+  if (!ctrl->calibrationRun && !ctrl->superPulse) {
+    fOut = new TFile(ctrl->rootFile.Data(), "RECREATE");
+    gdata = new TTree("gdata", "gdata");
+    gdata->Branch("g3", "g3OUT", &(gret->g3Out));
+  } else if (!ctrl->superPulse) {
+    fOut = new TFile(ctrl->rootFile.Data(), "RECREATE");
+  }
+
   unsigned char buf[65536];
   UShort_t junk[8192];
 
-  /* Check file length for progress */
-  struct stat fileStatus;
+  Int_t filesToRead = 0;
+  int64_t bytesInFile = 0;
   Int_t multParts = 0;
-  if (stat(ctrl->inputFile.Data(), &fileStatus) != 0) {
-    cout << "Seems this is a file that is written in pieces.  Scanning all pieces... \n";
-    multParts = 1;
-  } 
-
   Int_t nFiles = 0;
   vector<Int_t> runNumList;
   vector<Int_t> runNumListEndNum;
   
-  if (multParts && ctrl->holeNum >= 1) { // One Quad Only
-    nFiles = 4;
-    runNumList.push_back(ctrl->holeNum*4);
-    runNumList.push_back(ctrl->holeNum*4 - 1);
-    runNumList.push_back(ctrl->holeNum*4 - 2);
-    runNumList.push_back(ctrl->holeNum*4 - 3);
-  }
+  /* Check file length for progress */
+  if (ctrl->fileList == 0) {
+    struct stat fileStatus;
+    multParts = 0;
+    if (stat(ctrl->inputFile.Data(), &fileStatus) != 0) {
+      cout << "Seems this is a file that is written in pieces.  Scanning all pieces... \n";
+      multParts = 1;
+    } 
     
-  int64_t bytesInFile = 0;
-
-  if (multParts == 0) {
-    bytesInFile = (int64_t) fileStatus.st_size;
-    cout << "Input data file size is " << (Float_t)bytesInFile/1024./1024./1024. << " GB\n\n";
-  } else if (multParts == 1) {
-    if (nFiles > 0) {
-      for (Int_t n=0; n<nFiles; n++) {
-	for (Int_t endNum = 1; endNum<1000; endNum++) {
-	  TString fName = ctrl->inputFile;
-	  fName += Form("%d_%d", runNumList[n], endNum);	
-	  if (stat(fName.Data(), &fileStatus) == 0) {
-	    runNumListEndNum.push_back(endNum);
-	    bytesInFile += (int64_t)fileStatus.st_size;
-	    endNum = 1000;
-	    printf("%s\n", fName.Data());
+    nFiles = 0;
+    vector<Int_t> runNumList;
+    vector<Int_t> runNumListEndNum;
+    
+    if (multParts && ctrl->holeNum >= 1) { // One Quad Only
+      nFiles = 4;
+      runNumList.push_back(ctrl->holeNum*4);
+      runNumList.push_back(ctrl->holeNum*4 - 1);
+      runNumList.push_back(ctrl->holeNum*4 - 2);
+      runNumList.push_back(ctrl->holeNum*4 - 3);
+    }
+    
+    bytesInFile = 0;
+    
+    if (multParts == 0) {
+      bytesInFile = (int64_t) fileStatus.st_size;
+      cout << "Input data file size is " << (Float_t)bytesInFile/1024./1024./1024. << " GB\n\n";
+    } else if (multParts == 1) {
+      if (nFiles > 0) {
+	for (Int_t n=0; n<nFiles; n++) {
+	  for (Int_t endNum = 1; endNum<1000; endNum++) {
+	    TString fName = ctrl->inputFile;
+	    fName += Form("%d_%d", runNumList[n], endNum);	
+	    if (stat(fName.Data(), &fileStatus) == 0) {
+	      runNumListEndNum.push_back(endNum);
+	      bytesInFile += (int64_t)fileStatus.st_size;
+	      endNum = 1000;
+	      printf("%s\n", fName.Data());
+	    }
+	  }
+	}
+      } else {
+	for (Int_t n=1; n<121; n++) {
+	  for (Int_t endNum = 1; endNum<1000; endNum++) {
+	    TString fName = ctrl->inputFile;
+	    fName += Form("%d_%d", n, endNum);	
+	    if (stat(fName.Data(), &fileStatus) == 0) {
+	      runNumList.push_back(n);
+	      runNumListEndNum.push_back(endNum);
+	      bytesInFile += (int64_t)fileStatus.st_size;
+	      nFiles++;
+	      endNum = 1000;
+	      printf("%s\n", fName.Data());
+	    }
 	  }
 	}
       }
-    } else {
-      for (Int_t n=1; n<121; n++) {
-	for (Int_t endNum = 1; endNum<1000; endNum++) {
-	  TString fName = ctrl->inputFile;
-	  fName += Form("%d_%d", n, endNum);	
-	  if (stat(fName.Data(), &fileStatus) == 0) {
-	    runNumList.push_back(n);
-	    runNumListEndNum.push_back(endNum);
-	    bytesInFile += (int64_t)fileStatus.st_size;
-	    nFiles++;
-	    endNum = 1000;
-	    printf("%s\n", fName.Data());
-	  }
-	}
+      cout << "Total input files (" << nFiles << " of them) size is " << (Float_t)bytesInFile/1024./1024./1024. << "GB\n\n";
+    }
+  } else {
+    Int_t lineCount = 0;
+    struct stat fileStatus;
+    std::string line;
+    std::ifstream file(ctrl->fileListFile.Data());
+    if (file.is_open()) {
+      while(std::getline(file, line)) {
+      lineCount++;
+      if (stat(line.c_str(), &fileStatus) == 0) {
+	bytesInFile += (int64_t)fileStatus.st_size;
       }
     }
-    cout << "Total input files (" << nFiles << " of them) size is " << (Float_t)bytesInFile/1024./1024./1024. << "GB\n\n";
+    }
+    file.close();
+    printf("Will read %d files from the file list and sort.  Total size is %f GB\n", lineCount, (Float_t)bytesInFile/1024./1024./1024.);
+    filesToRead = lineCount; 
   }
   
   int64_t bytesRead = 0;
-
+  
   FILE *inf;
-
+  
   Int_t nRuns = 1;
   if (multParts==1) { nRuns = nFiles; }
+
+  Int_t filesRead = 0;
   
   long long int firstTS = 0;
-
+  
   Short_t currentPercentage = 0, lastPercentage = -1;
   
   for (Int_t mm = 0; mm<nRuns; mm++) {
-    if (nRuns == 1) {
-      inf = fopen(ctrl->inputFile.Data(), "r");
-      printf("\nOpened file - %s\n", ctrl->inputFile.Data());
-    } else {
-      TString fName = ctrl->inputFile;
-      fName += Form("%d_%d", runNumList[mm], runNumListEndNum[mm]);
-      inf = fopen(fName.Data(), "r");
-      printf("\nOpened file - %s\n", fName.Data());
+    if (!ctrl->fileList) {
+      if (nRuns == 1) {
+	inf = fopen(ctrl->inputFile.Data(), "r");
+	printf("\nOpened file - %s\n", ctrl->inputFile.Data());
+      } else {
+	TString fName = ctrl->inputFile;
+	fName += Form("%d_%d", runNumList[mm], runNumListEndNum[mm]);
+	inf = fopen(fName.Data(), "r");
+	printf("\nOpened file - %s\n", fName.Data());
+      }
+    } else if (ctrl->fileList) {
+      Int_t linesRead = 0;
+      std::string line;
+      std::ifstream file(ctrl->fileListFile.Data());
+      if (file.is_open()) {
+	while(std::getline(file, line)) {
+	  if (filesRead == linesRead) {
+	    inf = fopen(line.c_str(), "r");
+	    printf("\nOpened file - %s\n", line.c_str());
+	  }
+	  linesRead++;
+	}
+      }
+      file.close();
+      filesRead++;
+      if (filesRead == filesToRead) { mm = nRuns; } else { mm = -1; }
     }
-        
+    
     Int_t siz = 0;
     siz = fread(&rHeader, sizeof(struct routingHdr), 1, inf);
     bytesRead += sizeof(struct routingHdr);
@@ -305,19 +338,20 @@ int main (int argc, char *argv[]) {
       
       if (abs(deltaEvent) < EB_DIFF_TIME) {
 	
-	GetData(inf, lastEvtLength, lastSeqNum);
+	GetData(inf, lastEvtLength, lastSeqNum, ctrl);
 	//printf("Returned from GetData\n");
 	bytesRead += rHeader.length;
 	
       } else {
 	
-	if (!ctrl->calibrationRun) { gdata->Fill(); }
-	if (ctrl->calibrationRun) { gret->fillHistos(); }
+	if (!ctrl->calibrationRun && !ctrl->superPulse) { gdata->Fill(); }
+	if (ctrl->calibrationRun && !ctrl->superPulse) { gret->fillHistos(); }
+	if (ctrl->superPulse) { gret->checkSP(); gret->sp.MakeSuperPulses(); }
 	gret->Reset();
 	currTS = rHeader.timestamp;
 	deltaEvent = (Float_t)(rHeader.timestamp - currTS);
 	
-	GetData(inf, lastEvtLength, lastSeqNum);
+	GetData(inf, lastEvtLength, lastSeqNum, ctrl);
 	bytesRead += rHeader.length;
       }
 
@@ -332,12 +366,16 @@ int main (int argc, char *argv[]) {
     }
   } /* Loop over run segments */
   
-  if (!ctrl->calibrationRun) { gdata->Write(); }
-  if (ctrl->calibrationRun) { gret->gHist.writeHistos(); }
+  if (!ctrl->calibrationRun && !ctrl->superPulse) { gdata->Write(); }
+  if (ctrl->calibrationRun && !ctrl->superPulse) { gret->gHist.writeHistos(); }
+  if (ctrl->superPulse) { gret->checkSP(); gret->sp.MakeSuperPulses(); }
+  if (ctrl->superPulse) { gret->sp.FinishSuperPulses(); gret->sp.WriteSuperPulses(); }
 
-  fOut->Write();
-  fOut->Close();
-
+  if (!ctrl->superPulse) {
+    fOut->Write();
+    fOut->Close();
+  }
+    
   for (Int_t i=0; i<121; i++) {
     if (gret->eventCnt[i] > 0) {
       printf("\n Crystal %d - total events %d", i, gret->eventCnt[i]);
@@ -366,7 +404,7 @@ int main (int argc, char *argv[]) {
   return 0;
 }
 
-void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
+void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum, controlVariables *ctrl) {
   UShort_t junk[8192];
 
   // printf("In GetData - %d\n", rHeader.type);
@@ -374,7 +412,7 @@ void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
   switch (rHeader.type) {
   case 3:
     {
-      gret->getMode3(inf, rHeader.length, rHeader.subtype, rHeader.type);
+      gret->getMode3(inf, rHeader.length, rHeader.subtype, rHeader.type, ctrl);
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSubType = rHeader.subtype;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSequence = rHeader.seqnum;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhTS = rHeader.timestamp;
@@ -384,12 +422,15 @@ void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
       } else {
 	Int_t deltaSeqNum = rHeader.seqnum - gret->lastSeqNum[rHeader.subtype];
 	if (deltaSeqNum < 1) {
-	  printf("Crystal %d - sequence numbers out of order.  Previous %d, now %d\n", rHeader.subtype,
-		 gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  if (DEBUG) {
+	    printf("Crystal %d - sequence numbers out of order.  Previous %d, now %d\n", rHeader.subtype,
+		   gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  }
 	  gret->seqNumOOO[rHeader.subtype]++;
 	} else if (deltaSeqNum > 1) {
-	  printf("Crystal %d - sequence numbers skipped.  Previous %d, now %d\n", rHeader.subtype,
-		 gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  if (DEBUG) {printf("Crystal %d - sequence numbers skipped.  Previous %d, now %d\n", rHeader.subtype,
+			     gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
+	  } 
 	  gret->seqNumSkipped[rHeader.subtype] += (deltaSeqNum-1);
 	  gret->timesSeqNumSkipped[rHeader.subtype]++;
 	}
@@ -400,7 +441,7 @@ void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
     break;
   case 4:
     {
-      gret->getMode3(inf, rHeader.length, rHeader.subtype, rHeader.type);
+      gret->getMode3(inf, rHeader.length, rHeader.subtype, rHeader.type, ctrl);
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSubType = rHeader.subtype;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhSequence = rHeader.seqnum;
       gret->g3Out.xtals[gret->g3Out.crystalMult()-1].rhTS = rHeader.timestamp;
@@ -408,20 +449,20 @@ void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
       gret->eventCnt[rHeader.subtype]++;
       if (gret->lastSeqNum[rHeader.subtype] == -1) {
 	gret->lastSeqNum[rHeader.subtype] = rHeader.seqnum;
-	if (1) 	printf("\n Crystal %d - first sequence number in file %d\n", rHeader.subtype, rHeader.seqnum);
+	if (DEBUG) printf("\n Crystal %d - first sequence number in file %d\n", rHeader.subtype, rHeader.seqnum);
       } else {
 	Int_t deltaSeqNum = rHeader.seqnum - gret->lastSeqNum[rHeader.subtype];
 	if (gret->lastSeqNum[rHeader.subtype] == 65535) {
 	  deltaSeqNum = rHeader.seqnum + 65536 - gret->lastSeqNum[rHeader.subtype];
 	}
 	if (deltaSeqNum < 1) {
-	  if (1) {
+	  if (DEBUG) {
 	    printf("\nCrystal %d - sequence numbers out of order.  Previous %d, now %d\n", rHeader.subtype,
 		   gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
 	  }
 	  gret->seqNumOOO[rHeader.subtype]++;
 	} else if (deltaSeqNum > 1) {
-	  if (1) {
+	  if (DEBUG) {
 	    printf("Crystal %d - sequence numbers skipped.  Previous %d, now %d\n", rHeader.subtype,
 		   gret->lastSeqNum[rHeader.subtype], rHeader.seqnum);
 	  }
@@ -434,18 +475,14 @@ void GetData(FILE* inf, Int_t lastLength, Int_t lastSeqNum) {
     break;
   case 2:
     {
-      gret->getMode2(inf, rHeader.length, rHeader.subtype);
-      gret->ng2++;
-      gret->g2Out.xtals[gret->g2Out.crystalMult()-1].rhSubType = rHeader.subtype;
-      gret->g2Out.xtals[gret->g2Out.crystalMult()-1].rhSequence = rHeader.seqnum;
-      gret->g2Out.xtals[gret->g2Out.crystalMult()-1].rhTS = rHeader.timestamp;
+      cout << "Expecting to sort superpulses - raw data.  I can't sort decomp with this code.\n";
     }
     break;
   default:
     {
       cout << "Routing Header type not recognized: " << rHeader.type << endl;
       // SkipData(inf, junk);
-      LookForGoodData(inf, junk,lastLength, lastSeqNum);
+      LookForGoodData(inf, junk,lastLength, lastSeqNum, ctrl);
     }
   }
 
@@ -459,7 +496,7 @@ void SkipData(FILE *inf, UShort_t junk[]) {
   }
 }
 
-void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum) {
+void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum, controlVariables *ctrl) {
   printf("Last Event Length = %d, last sequence number = %d\n", lastEvt, lastSeqNum);
 
   // This happens when the last event was > 9000 (frame size).
@@ -492,7 +529,7 @@ void LookForGoodData(FILE *inf, UShort_t junk[], Int_t lastEvt, Int_t lastSeqNum
       }
       if (rHeader.version == 2 && rHeader.flags == 0 && rHeader.type == 4) {
 	printf("Recovered after bad header with data at %d (sequence number = %d)\n", i, rHeader.seqnum);
-	GetData(inf, lastEvt, lastSeqNum);
+	GetData(inf, lastEvt, lastSeqNum, ctrl);
 	success = 1;
       } else {
 	fseek(inf, -(sizeof(struct routingHdr)-1), SEEK_CUR);
@@ -507,8 +544,12 @@ void PrintHelpInformation() {
   printf("\n");
   printf("Usage: readGreta <Usage Flags> -f <InputFileWithPath> -rootFile <ROOTOutputName>\n");
   printf("     Valid usage flags: -readCal <calFileName>\n");
+  printf("                        -superPulse pars669.txt <lowE> <highE>\n");
+  printf("                        -withWaveform\n");
   printf("                        -calibrationRun (fills calibration histograms, no Tree)\n");
   printf("                        -hole <X=1 to 120>  (for analyzing the files from a single Quad only if data is taken crystal-wise)");
+  printf("\n");
+  printf("            Alternative to -f:  -fList <FileWithListOfFiles, Full paths>\n");
   printf("\n");
   printf("  Note - if you give a path to a run with many subfiles, just give the first part of the file name (e.g. the part\n");
   printf("         that tab-completes and it will scan ALL files.  If you specify a hole number it will only scan the \n");

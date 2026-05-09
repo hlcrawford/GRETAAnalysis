@@ -3,7 +3,6 @@
 #define DEBUG 0
 #define KEEP_WAVEFORMS 0
 
-ClassImp(rotationMatrix);
 ClassImp(gretaWaveformMsg);
 
 /*********************************************************************************/
@@ -346,107 +345,6 @@ int dptc_unpack16(uint32_t *compr, size_t ncompr,
 
 /* Now back to GRETA-specific code */
 
-/**************************************************************/
-/* rotationMatrix class functions *****************************/
-/**************************************************************/
-
-/*! Loads the rotation matrix that maps from crystal coordinates 
-    to world coordinates based on the hole position of a detector.
-    This function reads the text format file, NOT the binary file.
-
-    \param file A string value, the filename of the text format 
-           rotation matrix (typically crmat.dat)
-    \return Returns 0 if successful, and 1 if the file couldn't be 
-            opened 
-*/
-
-Int_t rotationMatrix::ReadMatrix(TString file) {
-  FILE *fp;
-
-  Float_t f1, f2, f3, f4;
-  Int_t pos, xtal;
-  Int_t nn = 0;
-  char *st, str[256];
-  
-  fp = fopen(file.Data(), "r");
-  if (fp == NULL) {
-    printf("Could not open \"%s\".\n", file.Data());
-    exit(1);
-  } else {
-    printf("\"%s\" open...", file.Data());
-  }
-  
-  nn = 0;
-  st = fgets(str, 256, fp);
-  while (st != NULL) {
-    if (str[0] == 35) {
-      /* '#' comment line, do nothing */
-    } else if (str[0] == 59) {
-      /* ';' comment line, do nothing */
-    } else if (str[0] == 10) {
-      /* Empty line, do nothing */
-    } else {
-      sscanf(str, "%i %i", &pos, &xtal);
-      for (Int_t i=0; i<4; i++) {
-	st = fgets(str, 256, fp);
-	sscanf(str, "%f %f %f %f", &f1, &f2, &f3, &f4);
-	crmat[pos-1][xtal][i][0] = f1;
-	crmat[pos-1][xtal][i][1] = f2;
-	crmat[pos-1][xtal][i][2] = f3;
-	crmat[pos-1][xtal][i][3] = f4;
-      }
-      nn++;
-    }
-    /* Attempt to read the next line */
-    st = fgets(str, 256, fp);
-  }
-  
-  printf("Read %i rotation matrix coefficients.\n", nn);
-
-  /* Done! */
-  fclose(fp);
-  return (0);
-}
-
-/**************************************************************/
-
-/*! Calculates the world position for a point in crystal coordinates
-    based on the rotation matrix provided and the hole number (position)
-    of the crystal
-
-    \param crystalID The integer crystal identification - the hole 
-           number comes from crystalID/4, and the crystal number from
-	   crystalID%4
-    \param xyz TVector3 value of the position to be transformed into 
-           world coordinates space
-    \return Returns the TVector3 corresponding to the point in world
-            coordinate space
-*/
-
-TVector3 rotationMatrix::crys2Lab(Int_t crystalID, TVector3 xyz) {
-
-  Int_t detectorPosition = ((crystalID)/4);
-  Int_t crystalNumber = (crystalID%4);
-  if (crystalNumber==0) { crystalNumber = 4; detectorPosition-= 1; }
-
-  crystalNumber -= 1; // Crystal numbers need to be 0..3
-
-  TVector3 xyzLab;
-  xyzLab.SetX((Double_t)((crmat[detectorPosition][crystalNumber][0][0] * xyz.X()) +
-			 (crmat[detectorPosition][crystalNumber][0][1] * xyz.Y()) +
-			 (crmat[detectorPosition][crystalNumber][0][2] * xyz.Z()) +
-			 (crmat[detectorPosition][crystalNumber][0][3]) ));
-  xyzLab.SetY((Double_t)((crmat[detectorPosition][crystalNumber][1][0] * xyz.X()) +
-			 (crmat[detectorPosition][crystalNumber][1][1] * xyz.Y()) +
-			 (crmat[detectorPosition][crystalNumber][1][2] * xyz.Z()) +
-			 (crmat[detectorPosition][crystalNumber][1][3]) ));
-  xyzLab.SetZ((Double_t)((crmat[detectorPosition][crystalNumber][2][0] * xyz.X()) +
-			 (crmat[detectorPosition][crystalNumber][2][1] * xyz.Y()) +
-			 (crmat[detectorPosition][crystalNumber][2][2] * xyz.Z()) +
-			 (crmat[detectorPosition][crystalNumber][2][3]) ));
-  
-  return xyzLab;
-}
 
 /* Function for 64-bit numbers endian-ness stuff */
 uint64_t GRETA::ntoh64(uint64_t input) {
@@ -548,112 +446,6 @@ Float_t g3OUT::calorimeterE() {
   return sum;
 }
 
-void g2IntPts::Reset() {
-  e = 0;
-}
-
-void g2CrystalEvent::Reset() {
-  intPts.clear();
-  for (Int_t i=0; i<40; i++) {
-    tr[i].clear();
-  }
-}
-
-TVector3 g2CrystalEvent::maxIntPtXYZLab() {
-  Float_t maxE = 0; Int_t max = -1;
-  for (Int_t i=0; i<intPts.size(); i++) {
-    if (intPts[i].e > maxE) {
-      maxE = intPts[i].e;
-      max = i;
-    }
-  }
-  if (max > -1) { return intPts[max].xyzLab; }
-  else { return TVector3(0., 0., 0.); }
-}
-
-Double_t g2CrystalEvent::maxIntPtX() {
-  Float_t maxE = 0.0;
-  Int_t maxI = -1;
-  if (intPts.size() > 0) {
-    for (Int_t i=0; i<intPts.size(); i++) {
-      if (intPts[i].e > maxE) {
-	maxE = intPts[i].e;
-	maxI = i;
-      }
-    }
-    return intPts[maxI].xyzCrystal.X();
-  } else {
-    return -10000.;
-  }
-}
-
-Double_t g2CrystalEvent::maxIntPtY() {
-  Float_t maxE = 0.0;
-  Int_t maxI = -1;
-  if (numIntPts() > 0) {
-    for (Int_t i=0; i<intPts.size(); i++) {
-      if (intPts[i].e > maxE) {
-	maxE = intPts[i].e;
-	maxI = i;
-      }
-    }
-    return intPts[maxI].xyzCrystal.Y();
-  } else {
-    return -10000.;
-  }
-}
-
-Double_t g2CrystalEvent::maxIntPtR() {
-  if (numIntPts() > 0) {
-    return TMath::Sqrt(maxIntPtY()*maxIntPtY() + maxIntPtX()*maxIntPtX());
-  }
-  else {
-    return -1;
-  }
-}
-
-Double_t g2CrystalEvent::maxIntPtZ() {
-  Float_t maxE = 0.0;
-  Int_t maxI = -1;
-  if (numIntPts() > 0) {
-    for (Int_t i=0; i<intPts.size(); i++) {
-      if (intPts[i].e > maxE) {
-	maxE = intPts[i].e;
-	maxI = i;
-      }
-    }
-    return intPts[maxI].xyzCrystal.Z();
-  } else {
-    return -10000.;
-  }
-}
-
-Float_t g2CrystalEvent::gTheta() {
-  if (numIntPts() > 0) {
-    return maxIntPtXYZLab().Theta();
-  } else { return 0.0; }
-}
-
-Float_t g2CrystalEvent::gPhi() {
-  if (numIntPts() > 0) {
-    if (maxIntPtXYZLab().Phi() < 0) {
-      return (maxIntPtXYZLab().Phi() + TMath::TwoPi());
-    } else {
-      return maxIntPtXYZLab().Phi();
-    }
-  } else { return 0.0; }
-}
-
-UInt_t g2CrystalEvent::numIntPts() { return intPts.size(); }
-
-
-
-void g2OUT::Reset() {
-  xtals.clear();
-}
-
-UInt_t g2OUT::crystalMult() { return xtals.size(); } 
-
 gHistos::gHistos() {
   for (Int_t i=0; i<121; i++) {
     for (Int_t j=0; j<4; j++) {
@@ -699,14 +491,6 @@ void GRETA::fillHistos() {
 void GRETA::Initialize(controlVariables *ctrl) {
   ng2 = 0;
 
-  ReadSegmentCenters("gretaCalibrations/segmentCenters.dat");
-
-  if (ctrl->calibrationRun) {
-    doingACalibration = 1;
-  } else {
-    doingACalibration = 0;
-  }
-
   for (Int_t i=0; i<121; i++) {
     lastSeqNum[i] = -1;
     seqNumOOO[i] = 0;
@@ -721,50 +505,9 @@ void GRETA::Initialize(controlVariables *ctrl) {
 void GRETA::Reset() { 
   g3X.Clear();
   g3Out.Reset();
-
-  g2X.Clear();
-  g2Out.Reset();
 }
 
-void GRETA::ReadSegmentCenters(TString filename) {
-  FILE *fp;
-  Int_t i1, i2, nn;  Float_t f1, f2, f3;
-  char *st, str[128];
-  
-  /* Open file */
-  fp = fopen(filename.Data(), "r");
-  if (fp == NULL) {
-    printf("Could not open \"%s\".\n", filename.Data());
-    exit(1);
-  }
-  printf("\"%s\" open...", filename.Data());
-  
-  /* Read values */
-  nn = 0;
-  st = fgets(str, 64, fp);
-  while (st!=NULL) {
-    if (str[0] == 35 || str[0] == 59 || str[0] == 10) {
-      /* Comment or blank line.  Do nothing. */
-    } else {
-      sscanf(str, "%i %i %f %f %f", &i1, &i2, &f1, &f2, &f3);
-      if (i1>=0 && i1<=1 && i2>=0 && i2<=35) {
-        segCenter[i1][0][i2] = f1;
-        segCenter[i1][1][i2] = f2;
-        segCenter[i1][2][i2] = f3;
-      }
-      nn++;
-    }
-    
-    /* Attempt to read next line. */
-    st = fgets(str, 64, fp);
-  }
-  printf("Read %i segment positions.\n", nn-1);
-  
-  fclose(fp);
-}
-  
-
-Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
+Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type, controlVariables *ctrl) {
   gretaWaveformMsg wform;
   Int_t siz = 0;
 
@@ -797,28 +540,13 @@ Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
   } 
 
   g3X.Clear();
-  g3X.version = wform.version;
-  g3X.id = wform.id;
+  /* Minimal unpack for superpulse analysis...*/
+  g3X.id = subType;
   g3X.trLen = ntohs(wform.tr_len);
-  // g3X.trigSrc = ntohs(wform.trig_src);
-  // g3X.pad = ntohs(wform.pad);
-  g3X.timestamp = ntoh64((uint64_t)wform.timestamp);
-  g3X.pileup = ntoh64((uint64_t)wform.pileup);
   for (Int_t i=0; i<40; i++) {
     g3X.ener[i] = ntohl(wform.ener[i]);
   }
-  g3X.hist_corr[0][0] = ntohs(wform.hist_corr[0][0]);
-  g3X.hist_corr[0][1] = ntohs(wform.hist_corr[0][1]);
-  g3X.hist_corr[1][0] = ntohs(wform.hist_corr[1][0]);
-  g3X.hist_corr[1][1] = ntohs(wform.hist_corr[1][1]);
-  g3X.t0 = ntohs(wform.t0);
-  g3X.subt0 = ntohs(wform.sub_t0);
-  g3X.tLEDCore = ntohs(wform.t_led_core);
-  g3X.tCFDCore = ntohs(wform.t_cfd_core);
-  g3X.tLEDFirst = ntohs(wform.t_led_first);
-
-  // dT[subType]->Fill(g3X.hist_corr[0][1]);
-  // dT[subType]->Fill(g3X.hist_corr[1][1]);
+  if (ctrl->superPulse)  {  sp.trLen = g3X.trLen; }
   for (Int_t i=36; i<40; i++) {
     g3X.ccE.push_back((g3X.ener[i]/128.)*gain[subType][i] + offset[subType][i]);
   }
@@ -828,7 +556,7 @@ Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
 
   if (evtLength <= 9000) {
     vector<int16_t> itr;
-    if (KEEP_WAVEFORMS) {
+    if (ctrl->keepWaveforms || ctrl->superPulse) {
       if (type==3) { // Uncompressed waveforms, type 3, need to propagate this forward
 	int16_t trace[5000];
 	if (DEBUG) {
@@ -881,162 +609,68 @@ Int_t GRETA::getMode3(FILE *inf, Int_t evtLength, Int_t subType, Int_t type) {
     fseek(inf, (9000-sizeof(struct gretaWaveformMsg)), SEEK_CUR);
   }
 
-  analyzeMode3(&g3X);
+  if (ctrl->superPulse) {
+    for (Int_t j=0; j<sp.trLen; j++) {
+      for (Int_t seg=0; seg<36; seg++) {
+	sp.waves[subType][seg][j] = g3X.tr[seg][j]; 
+      }
+      sp.waves[subType][36][j] = g3X.tr[36][j];
+    }
+  }
+  
   g3Out.xtals.push_back(g3X);
   return 0;
   
 }
 
-Int_t GRETA::analyzeMode3(g3CrystalEvent *g3) {
-
-  for (Int_t i=0; i<36; i++) {
-    if (g3->segE[i] > 5) {
-      g3->segsHit.push_back(i);
-    }
+Int_t GRETA::checkSP() {
+  for (Int_t i=0; i<121; i++) {
+    sp.netSeg[i] = -1;
+    sp.mult[i] = 0;
+    sp.ccE[i] = -1;
+    sp.segE[i] = -1;
+    
   }
 
-  g3->noNeighbors = 1;
-
- 
-  //  if (g3->segsHit.size() > 1) {
-  //  for (Int_t i=0; i<g3->segsHit.size(); i++) {
-  //  for (Int_t j=i+1; j<g3->segsHit.size(); j++) {
-  //	if (abs(j-i) == 6) {
-  //	  g3->noNeighbors = 0;
-  //	}
-  //	if (abs(j-i) == 1) {
-  //	  if ((i%5==0 && j%6 == 0) || (i%6==0 && j%5 == 0)) {
-  //	    g3->noNeighbors = 1;
-  //	  } else {
-  //	    g3->noNeighbors = 0;
-  //	  }
-  //	}
-  //  }
-  //  }
-  // }
+  Int_t xtalNum = -1;
   
-  return 0;
-
-}
-
-Int_t GRETA::getMode2(FILE *inf, Int_t evtLength, Int_t subType) {
-
-  gretaIntPtMsg ipmsg;
-  Int_t siz = 0;
-
-  Int_t bytesRead = 0;
-  
-  siz = fread(&ipmsg, 1, sizeof(gretaIntPtMsg), inf);
-  bytesRead = siz;
-  // printf("bytesRead %d\n", bytesRead);
-  
-  if (DEBUG) {
-    printf("Decomp message!\n"); 
-    printf("  Version:  %i\n", ipmsg.version); 
-    printf("  ID:           %i\n", ipmsg.id);
-    printf("  timestamp: %lld\n", ipmsg.timestamp);
-    printf("  numFits: %d\n", ipmsg.num_fits);
-    printf("  event length: %d\n", evtLength);
-    printf("Length remaining for intpts: %lu\n", evtLength - sizeof(gretaIntPtMsg));
-  } 
-
-  vector<intPtFit> intPtFits;
-  vector<intPt> intpts;
-  intPtFit ipfit;
-  intPt ip;
-  
-  for (Int_t i=0; i<ipmsg.num_fits; i++) {
-    siz = fread(&ipfit, 1, sizeof(intPtFit), inf);
-    intPtFits.push_back(ipfit);
-    bytesRead += siz;
-
-    for (Int_t j=0; j<(ipfit.num_interactions); j++) {
-      siz = fread(&ip, 1, sizeof(intPt), inf);
-      intpts.push_back(ip);
-      bytesRead += siz;
-    }
-  }
-  
-  g2X.Reset();
-  g2X.id = ipmsg.id;
-  // g2X.trigSrc = ntohs(ipmsg.trig_src);
-  g2X.timestamp = ipmsg.timestamp;
-  // g2X.pileup = ntoh64((uint64_t)ipmsg.pileup);
-  for (Int_t i=0; i<40; i++) {
-    g2X.ener[i] = (Float_t)ipmsg.ener[i]/1000.;
-  }
-  if (DEBUG) {
-    printf("Energies: \n");
-    for (Int_t i=0; i<40; i++) {
-      cout << i << " " << g2X.ener[i] << endl;
-    }
-  }
-  
-  //  g2X.t0 = ntohs(wform.t0);
-  //  g2X.subt0 = ntohs(wform.sub_t0);
-  //  g2X.tLEDCore = ntohs(wform.t_led_core);
-  //  g2X.tCFDCore = ntohs(wform.t_cfd_core);
-  //  g2X.tLEDFirst = ntohs(wform.t_led_first);
-  g2X.num_fits = ipmsg.num_fits;
-  
-  Int_t ipIndex = 0;
-  for (Int_t i=0; i<ipmsg.num_fits; i++) {
-    g2X.errorCode = ipfit.errorCode;
-    for (Int_t j=0; j<ipfit.num_interactions; j++) {
-      g2Xip.Clear();
-      g2Xip.ir = (intpts[ipIndex].ir);
-      g2Xip.ip = (intpts[ipIndex].ip);
-      g2Xip.iz = (intpts[ipIndex].iz);
-      g2Xip.seg = (intpts[ipIndex].seg);
-      g2Xip.xyzCrystal = TVector3((intpts[ipIndex].x), (intpts[ipIndex].y), (intpts[ipIndex].z));
-      g2Xip.xyzLab = rot.crys2Lab(subType, g2Xip.xyzCrystal);
-      g2Xip.xyzLabSeg = rot.crys2Lab(subType, TVector3(segCenter[subType%2][0][g2Xip.seg], segCenter[subType%2][1][g2Xip.seg], segCenter[subType%2][2][g2Xip.seg]));
-      g2Xip.e = (intpts[ipIndex].e);
-      g2X.intPts.push_back(g2Xip);
-      ipIndex++;
-      if (DEBUG) {
-	printf("ip%d -- %f %f %f %f\n", ipIndex-1, g2Xip.xyzCrystal.X(), g2Xip.xyzCrystal.Y(), g2Xip.xyzCrystal.Z(), g2Xip.e);
+  for (UInt_t xtal = 0; xtal<g3Out.xtals.size(); xtal++) {
+    xtalNum = g3Out.xtals[xtal].id;
+    /* Loop over signals */
+    for (Int_t i=0; i<37; i++) {
+      /* Adjust trace baseline offsets */
+      Int_t s=0;
+      for (Int_t b=0; b<25; b++) {
+	s += sp.waves[xtalNum][i][b];
+      }
+      if (s >= 0) { s = (s+7)/25; }
+      else { s = (s-7)/25; }
+      for (Int_t b=0; b<sp.trLen; b++) {
+	sp.waves[xtalNum][i][b] -= s;
       }
     }
-  }
 
-  /* Mode 2+3 appends the waveform to the Mode2 basically */
-
-  // printf("Length used %d\n", bytesRead);
-  if (evtLength - bytesRead != 0) {
-    // printf("I still have data, probably waveforms...\n");
-
-    uint16_t wfLength[40];
-    siz = fread(wfLength, 1, 2*40, inf);
-    bytesRead += siz;
-
-    /* Get total compressed length of waveforms */
-    Int_t sumCompressedLengths = 0;
-    uint16_t sumDecompressionErrs = 0;
-    for (Int_t i=0; i<40; i++) {
-      sumCompressedLengths += ntohs(wfLength[i]);
-    }
-    if (sumCompressedLengths*4 != evtLength - bytesRead) {
-      printf("Compressed waveform lengths do not match expected, %u != %u\n", sumCompressedLengths*4, evtLength - bytesRead);
-    }
-    uint32_t wfData[16400];
-    fread(wfData, 4, sumCompressedLengths, inf);
-    for (Int_t i=0; i<sumCompressedLengths; i++) {
-     wfData[i] = ntohl(wfData[i]);
-    }
-    uint32_t *temp32 = (wfData);
-    for (Int_t ch=0; ch<40; ch++) {
-      int16_t trTemp[5000] = {0};
-      unsigned char* tmp = (unsigned char*)(trTemp);
-      sumDecompressionErrs += dptc_unpack16(temp32, ntohs(wfLength[ch]), (uint16_t*)( &trTemp ), 192, 16);
-      for (Int_t l=0; l<192; l++) {
-    	g2X.tr[ch].push_back(trTemp[l]);
+     /* Check for net energy. */
+    for (Int_t i=0; i<36; i++) {
+      Int_t avg = 0;
+      for (Int_t b=sp.trLen-10; b<sp.trLen; b++) {
+	avg += TMath::Abs(sp.waves[xtalNum][i][b]);
       }
-      temp32 += ntohs(wfLength[ch]);      
+      avg /= 10;
+      
+      if (avg > 20 && g3Out.xtals[xtal].segE[i]) { /* Net */
+	if (g3Out.xtals[xtal].segE[i] > sp.segE[xtalNum]) {
+	  sp.segE[xtalNum] = g3Out.xtals[xtal].segE[i];
+	  sp.netSeg[xtalNum] = i;
+	}
+	sp.segs[xtalNum][sp.mult[xtalNum]] = i;
+	sp.mult[xtalNum]++;
+      } 
     }
+
+    sp.ccE[xtalNum] = g3Out.xtals[xtal].ccE[0]; 
   }
-  
-  g2Out.xtals.push_back(g2X);
+
   return 0;
-  
 }
+

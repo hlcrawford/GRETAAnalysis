@@ -19,10 +19,17 @@ ClassImp(controlVariables);
 controlVariables::controlVariables() { 
   specifyCalibration = 0;
   calibrationFile = "";
-  inputFile = "";
+  inputFile = "none";
+  fileList = 0;
+  fileListFile = "";
   rootFile = "";
   holeNum = -1;
   calibrationRun = 0;
+  superPulse = 0;
+  spXtalkFile = "";
+  spLowE = -1;
+  spHighE = -1;
+  keepWaveforms = 0;
 }
 
 /****************************************************/
@@ -30,10 +37,17 @@ controlVariables::controlVariables() {
 void controlVariables::Initialize() {  
   specifyCalibration = 0;
   calibrationFile = "";
-  inputFile= "";
+  inputFile= "none";
+  fileList = 0;
+  fileListFile = "";
   rootFile = "";
   holeNum = -1;
   calibrationRun = 0;
+  superPulse = 0;
+  spXtalkFile = "";
+  spLowE = -1;
+  spHighE = -1;
+  keepWaveforms = 0;
 }
 
 /****************************************************/
@@ -44,6 +58,11 @@ Int_t controlVariables::InterpretCommandLine(int argc, char *argv[]) {
     if (strcmp(argv[i], "-f") == 0) {
       inputFile = argv[i+1];
       printf("Input file: %s\n", inputFile.Data());
+      i+=2;
+    } else if (strcmp(argv[i], "-fList") == 0) {
+      fileList = 1;
+      fileListFile = argv[i+1];
+      printf("Input file list: %s\n", fileListFile.Data());
       i+=2;
     } else if (strcmp(argv[i], "-rootFile") == 0) {
       rootFile = argv[i+1];
@@ -57,7 +76,16 @@ Int_t controlVariables::InterpretCommandLine(int argc, char *argv[]) {
       i+=2;
     } else if (strcmp(argv[i], "-calibrationRun") == 0) {
       calibrationRun = 1;
-      i++;    
+      i++;
+    } else if (strcmp(argv[i], "-superPulse") == 0) {
+      superPulse = 1;
+      spXtalkFile = argv[i+1];
+      spLowE = atoi(argv[i+2]);
+      spHighE = atoi(argv[i+3]);
+      i+=4;
+    } else if (strcmp(argv[i], "-withWaveforms") == 0) {
+      keepWaveforms = 1;
+      i++;
     } else {
       cout << "Error -- unrecognized input flag: " << argv[i] << endl;
       return -1;

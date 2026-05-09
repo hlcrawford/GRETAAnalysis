@@ -94,7 +94,7 @@ gretaDictHeaders = ['include/GRETA.h', 'include/dptc.h', 'include/SortingStructu
 env.RootCint(gretaDictTarget, gretaDictHeaders)
 
 gretaLibTarget = 'lib/GRETA'
-gretaLibSources = ['lib/GRETADict.cpp', 'src/GRETA.cpp', 'src/SortingStructures.cpp']
+gretaLibSources = ['lib/GRETADict.cpp', 'src/GRETA.cpp', 'src/SortingStructures.cpp', 'src/SuperPulse.cpp']
 env.SharedLibrary(target = gretaLibTarget, source = gretaLibSources, 
                   SHLIBPREFIX='lib')
 
