@@ -662,6 +662,13 @@ gHistos::gHistos() {
     for (Int_t j=0; j<36; j++) {
       eRawSeg[i][j] = NULL;
     }
+    for (Int_t j=0; j<4; j++) {
+      eCalCC[i][j] = NULL;
+    }
+    for (Int_t j=0; j<36; j++) {
+      eCalSeg[i][j] = NULL;
+    }
+    eCalSummary[i] = NULL;
   }
 }
 
@@ -675,6 +682,13 @@ void gHistos::writeHistos() {
     for (Int_t j=0; j<36; j++) {
       if (eRawSeg[i][j]!=NULL) { eRawSeg[i][j]->Write(); eRawSeg[i][j]->Delete(); }
     }
+    for (Int_t j=0; j<4; j++) {
+      if (eCalCC[i][j]!=NULL) { eCalCC[i][j]->Write(); eCalCC[i][j]->Delete(); }
+    }
+    for (Int_t j=0; j<36; j++) {
+      if (eCalSeg[i][j]!=NULL) { eCalSeg[i][j]->Write(); eCalSeg[i][j]->Delete(); }
+    }
+    if (eCalSummary[i]!=NULL) { eCalSummary[i]->Write(); eCalSummary[i]->Delete(); }
   }    
 }
 
@@ -689,10 +703,32 @@ void GRETA::fillHistos() {
     }
     for (Int_t i=0; i<36; i++) {
       if (!gHist.eRawSeg[id][i]) {
-	gHist.eRawSeg[id][i] = new TH1F(Form("eRawSeg_%d_%d", id, i), Form("eRawSeg_%d_%d", id, i), 10000, 0, 3000/gain[id][i+36]);
+	gHist.eRawSeg[id][i] = new TH1F(Form("eRawSeg_%d_%d", id, i), Form("eRawSeg_%d_%d", id, i), 10000, 0, 3000/gain[id][i]);
       } else { ; }
       gHist.eRawSeg[id][i]->Fill(g3Out.xtals[xtal].ener[i]/128.);
-    }					    
+    }
+    
+    for (Int_t i=0; i<4; i++) {
+      if (!gHist.eCalCC[id][i]) {
+	gHist.eCalCC[id][i] = new TH1F(Form("eCalCC_%d_%d", id, i), Form("eCalCC_%d_%d", id, i), 3000, 0, 3000);
+      } else { ; }
+      gHist.eCalCC[id][i]->Fill(g3Out.xtals[xtal].ccE[i]);
+    }
+    for (Int_t i=0; i<36; i++) {
+      if (!gHist.eCalSeg[id][i]) {
+	gHist.eCalSeg[id][i] = new TH1F(Form("eCalSeg_%d_%d", id, i), Form("eCalSeg_%d_%d", id, i), 3000, 0, 3000);
+      } else { ; }
+      gHist.eCalSeg[id][i]->Fill(g3Out.xtals[xtal].segE[i]);
+    }
+    if (!gHist.eCalSummary[id]) {
+      gHist.eCalSummary[id] = new TH2F(Form("eCalSummary_%d", id), Form("eCalSummary_%d", id), 40, 0, 40, 1000, 800, 1800);
+    } else { ; }
+    for (Int_t i=0; i<36; i++) {
+      gHist.eCalSummary[id]->Fill(i, g3Out.xtals[xtal].segE[i]);
+    }
+    for (Int_t i=0; i<4; i++) {
+      gHist.eCalSummary[id]->Fill(i+36, g3Out.xtals[xtal].ccE[i]);
+    }
   }
 }
       

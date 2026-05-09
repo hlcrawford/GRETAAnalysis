@@ -265,6 +265,9 @@ class gHistos : public TObject {
  public:
   TH1F *eRawCC[121][4];
   TH1F *eRawSeg[121][36];
+  TH1F *eCalCC[121][4];
+  TH1F *eCalSeg[121][36];
+  TH2F *eCalSummary[121];
   
  public:
   gHistos();
