@@ -25,14 +25,27 @@
 #include "TFile.h"
 #include "TTree.h"
 #include "TBranch.h"
+#include "TVector3.h"
+#include "TClass.h"
+#include "TSystem.h"
 
 #include "Globals.h"
 #include "SortingStructures.h"
 
-
 //#include "GRETA.h"
 
 using namespace std;
+
+/** Write one coincidence to gdata: full pre-Doppler g2Out + coincTS (tracking is pass 2: trackGreta). */
+static void flushCoincidenceToGdata(GRETA *gret, g2OUT *&g2OutBranch, Long64_t &coincTS, TTree *gdata)
+{
+  if (!g2OutBranch) g2OutBranch = new g2OUT();
+  *g2OutBranch = gret->g2Out;
+  coincTS = 0;
+  if (g2OutBranch->crystalMult() > 0)
+    coincTS = g2OutBranch->xtals[0].timestamp;
+  gdata->Fill();
+}
 
 #define CFD_INT_LEN 4
 #define CFD_DELAY 4
@@ -41,7 +54,7 @@ using namespace std;
 #define AVG_TR_STRIDE 110
 #define TR_SCALE 10000
 
-#define EB_DIFF_TIME 800
+#define EB_DIFF_TIME 210
 
 #define NUM_CHAN 40
 
@@ -69,7 +82,7 @@ void progressB(int pct) {
   struct winsize uk;
   if (ISATTY(FILENO(stdout))) {
     if (ioctl(0, TIOCGWINSZ, &uk) != 0) {
-      exit;
+      return;
     }
     int wdt = uk.ws_col - 20;
     if (wdt < 5) { wdt = 5; }
@@ -109,6 +122,49 @@ uint64_t hton64(uint64_t input) {
   return (ntoh64(input));
 }
 
+/** Defined in lib/GRETADict.cpp; registers all GRETA streamer dictionaries. */
+extern void TriggerDictionaryInitialization_GRETADict();
+
+static bool GretaDictionaryReady()
+{
+  return TClass::GetClass("g2OUT") && TClass::GetClass("vector<TVector3>");
+}
+
+/** Load libGRETA and GRETA dict (g2OUT, vector<TVector3>, etc.). */
+static void EnsureGretaDictionaryLoaded()
+{
+  if (GretaDictionaryReady()) return;
+
+  const char *pwd = gSystem->WorkingDirectory();
+  const TString libDir = TString::Format("%s/lib", pwd);
+  gSystem->AddDynamicPath(libDir.Data());
+
+  TString inc = gSystem->Getenv("ROOT_INCLUDE_PATH");
+  if (inc.Length()) inc += ":";
+  inc += libDir;
+  gSystem->Setenv("ROOT_INCLUDE_PATH", inc.Data());
+
+  const TString libPaths[] = {
+    libDir + "/libGRETA",
+    TString("lib/libGRETA"),
+    TString("libGRETA"),
+  };
+  for (const TString &lp : libPaths) {
+    if (gSystem->Load(lp.Data()) >= 0) break;
+  }
+
+  TriggerDictionaryInitialization_GRETADict();
+
+  if (!GretaDictionaryReady()) {
+    fprintf(stderr,
+	    "readGreta: GRETA ROOT dictionary not loaded (need g2OUT).\n"
+	    "  Run from the TrackBackToMe/GRETAAnalysis directory after:  scons readGreta\n"
+	    "  Expect: %s/libGRETA.dylib (or .so) and %s/GRETADict_rdict.pcm\n",
+	    libDir.Data(), libDir.Data());
+    exit(1);
+  }
+}
+
 int main (int argc, char *argv[]) {
   
   /* Some CTRL-C interrupt handling stuff... */
@@ -124,6 +180,8 @@ int main (int argc, char *argv[]) {
   if (ctrl->InterpretCommandLine(argc, argv) != 1) {
     exit(-1);
   }
+
+  EnsureGretaDictionaryLoaded();
 
   gret = new GRETA();
   gret->Initialize(ctrl);
@@ -168,9 +226,14 @@ int main (int argc, char *argv[]) {
   /* Initialize ROOT output */
   TFile *fOut = new TFile(ctrl->rootFile.Data(), "RECREATE");
   TTree *gdata = new TTree("gdata", "gdata");
+
+  g2OUT *g2OutBranch = nullptr;
+  Long64_t coincTS = 0;
+
   if (!ctrl->calibrationRun) {
-    gdata->Branch("g3", "g3OUT", &(gret->g3Out));
-    gdata->Branch("g2", "g2OUT", &(gret->g2Out));
+    gdata->Branch("g2Out", "g2OUT", &g2OutBranch);
+    gdata->Branch("coincTS", &coincTS);
+    printf("gdata branches: g2Out (full g2OUT), coincTS  (tracking: use trackGreta pass 2)\n");
   }
   
   unsigned char buf[65536];
@@ -215,7 +278,7 @@ int main (int argc, char *argv[]) {
 	  }
 	}
       }
-    } else {
+    } else if (0) {
       for (Int_t n=1; n<121; n++) {
 	for (Int_t endNum = 1; endNum<1000; endNum++) {
 	  TString fName = ctrl->inputFile;
@@ -230,7 +293,19 @@ int main (int argc, char *argv[]) {
 	  }
 	}
       }
+    } else {
+      for (Int_t endNum = 1; endNum<1000; endNum++) {
+	TString fName = ctrl->inputFile;
+	fName += Form("%d", endNum);
+	if (stat(fName.Data(), &fileStatus) == 0) {
+	  runNumListEndNum.push_back(endNum);
+	  bytesInFile += (int64_t)fileStatus.st_size;
+	  nFiles++;
+	  printf("%s\n", fName.Data());
+	}
+      }
     }
+    
     cout << "Total input files (" << nFiles << " of them) size is " << (Float_t)bytesInFile/1024./1024./1024. << "GB\n\n";
   }
   
@@ -244,15 +319,36 @@ int main (int argc, char *argv[]) {
   long long int firstTS = 0;
 
   Short_t currentPercentage = 0, lastPercentage = -1;
+  Int_t TSreports = 0;
   
   for (Int_t mm = 0; mm<nRuns; mm++) {
-    if (nRuns == 1) {
-      inf = fopen(ctrl->inputFile.Data(), "r");
+    if (multParts==0 && nRuns == 1) {
+      if (!ctrl->hfc) {
+	inf = fopen(ctrl->inputFile.Data(), "r");
+      } else {
+	ctrl->inputFile = "./GEB_HFC -p " + ctrl->inputFile;
+	inf = popen(ctrl->inputFile.Data(), "r");
+      }
       printf("\nOpened file - %s\n", ctrl->inputFile.Data());
-    } else {
+    } else if (0) {
       TString fName = ctrl->inputFile;
       fName += Form("%d_%d", runNumList[mm], runNumListEndNum[mm]);
-      inf = fopen(fName.Data(), "r");
+      if (!ctrl->hfc) {
+	inf = fopen(fName.Data(), "r");
+      } else {
+	fName = "./GEB_HFC -p " + fName;
+	inf = popen(fName.Data(), "r");
+      }
+      printf("\nOpened file - %s\n", fName.Data());
+    } else {
+      TString fName = ctrl->inputFile;
+      fName += Form("%d", runNumListEndNum[mm]);
+      if (!ctrl->hfc) {
+	inf = fopen(fName.Data(), "r");
+      } else {
+	fName = "./GEB_HFC -p " + fName;
+	inf = popen(fName.Data(), "r");
+      }
       printf("\nOpened file - %s\n", fName.Data());
     }
         
@@ -261,12 +357,9 @@ int main (int argc, char *argv[]) {
     bytesRead += sizeof(struct routingHdr);
     
     long long int lastTS = 0;  long long int currTS = 0;
-    long long int deltaEvent = 0;
 
     Int_t lastEvtLength = 0;
     Int_t lastSeqNum = 0;
-    
-    Int_t TSreports = 0;
     
     while (siz && !gotSignal) {
       rHeader.seqnum = ntohs(rHeader.seqnum);
@@ -290,6 +383,9 @@ int main (int argc, char *argv[]) {
       
       if (rHeader.timestamp < lastTS && TSreports<10) {
 	printf("TS out of order: last TS %lld, current %lld\n", lastTS, rHeader.timestamp);
+	printf(" current type: %d\n", rHeader.subtype);
+	TSreports++;
+      } else if (rHeader.timestamp < lastTS) {
 	TSreports++;
       }
       lastTS = rHeader.timestamp;
@@ -298,12 +394,13 @@ int main (int argc, char *argv[]) {
 	currTS = rHeader.timestamp;
       }
       
-      deltaEvent = (Float_t)(rHeader.timestamp - currTS);
+      const long long dt_raw = rHeader.timestamp - currTS;
+      const long long dt_abs = (dt_raw >= 0) ? dt_raw : -dt_raw;
       if (DEBUG) {
-	printf(" DeltaT from last TS: %lld\n", deltaEvent);
+	printf(" DeltaT from last TS: %lld\n", dt_raw);
       }
       
-      if (abs(deltaEvent) < EB_DIFF_TIME) {
+      if (dt_abs < (long long)EB_DIFF_TIME) {
 	
 	GetData(inf, lastEvtLength, lastSeqNum);
 	//printf("Returned from GetData\n");
@@ -311,11 +408,12 @@ int main (int argc, char *argv[]) {
 	
       } else {
 	
-	if (!ctrl->calibrationRun) { gdata->Fill(); }
+	if (!ctrl->calibrationRun) {
+	  flushCoincidenceToGdata(gret, g2OutBranch, coincTS, gdata);
+	}
 	if (ctrl->calibrationRun) { gret->fillHistos(); }
 	gret->Reset();
 	currTS = rHeader.timestamp;
-	deltaEvent = (Float_t)(rHeader.timestamp - currTS);
 	
 	GetData(inf, lastEvtLength, lastSeqNum);
 	bytesRead += rHeader.length;
@@ -330,11 +428,22 @@ int main (int argc, char *argv[]) {
       bytesRead += sizeof(struct routingHdr);
       
     }
+
+    /* Flush last coincidence (EOF / signal exit leaves built event without boundary Fill). */
+    if (gret->g2Out.crystalMult() > 0 || gret->g3Out.crystalMult() > 0) {
+      if (!ctrl->calibrationRun) {
+	flushCoincidenceToGdata(gret, g2OutBranch, coincTS, gdata);
+      }
+      if (ctrl->calibrationRun) {
+	gret->fillHistos();
+      }
+      gret->Reset();
+    }
+
   } /* Loop over run segments */
   
-  if (!ctrl->calibrationRun) { gdata->Write(); }
+  fOut->cd();
   if (ctrl->calibrationRun) { gret->gHist.writeHistos(); }
-
   fOut->Write();
   fOut->Close();
 
@@ -355,8 +464,16 @@ int main (int argc, char *argv[]) {
       printf("\n --> Crystal %d - %d sequence numbers skipped", i, gret->seqNumSkipped[i]);
     }
   }
-  
-  //std::cout << "\n --> nG2 " << gret->ng2 << std::endl;
+
+  if (TSreports > 100000) {
+    printf("\033[0;31mTimestamp errors %d\033[0m\n", TSreports);
+  } else if (TSreports > 10000) {
+    printf("\033[0;33mTimestamp errors %d\033[0m\n", TSreports);
+  } else {
+    printf("\033[0;32mTimestamp errors %d\033[0m\n", TSreports);
+  }
+    
+  std::cout << "\n --> nG2 " << gret->ng2 << std::endl;
   //long long int delta = (rHeader.timestamp-firstTS);
   //Float_t lengthInS = (Float_t)delta / 100000000.;
   //std::cout << "\n  Duration = " << Float_t(delta)/100000000. << " s" << std::endl;
@@ -508,7 +625,11 @@ void PrintHelpInformation() {
   printf("Usage: readGreta <Usage Flags> -f <InputFileWithPath> -rootFile <ROOTOutputName>\n");
   printf("     Valid usage flags: -readCal <calFileName>\n");
   printf("                        -calibrationRun (fills calibration histograms, no Tree)\n");
-  printf("                        -hole <X=1 to 120>  (for analyzing the files from a single Quad only if data is taken crystal-wise)");
+  printf("                        -hole <X=1 to 120>  (for analyzing the files from a single Quad only if data is taken crystal-wise)\n");
+  printf("\n");
+  printf("  Output tree gdata has g2Out (full g2OUT) + coincTS per coincidence.\n");
+  printf("  Run tracking as pass 2:  trackGreta -i <rootFile> -o tracked.root -trackingChat <chat>\n");
+  printf("  Or parallel:  scripts/trackGretaParallel.sh -j N -i ... -o ... -trackingChat ...\n");
   printf("\n");
   printf("  Note - if you give a path to a run with many subfiles, just give the first part of the file name (e.g. the part\n");
   printf("         that tab-completes and it will scan ALL files.  If you specify a hole number it will only scan the \n");

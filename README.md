@@ -1,8 +1,19 @@
-# GRETAAnalysis
+# GRETAAnalysis (TrackBackToMe)
 
-Code compiles to 4 executables:
+Same codebase as `/Users/heather/GRETAAnalysis`, with TrackBackToMe-specific settings (`EB_DIFF_TIME=210`, crystal remap in `GRETA.cpp`).
 
-1) Analyze -- analyzes waveform data, either written via the CS forward buffers or directly from the DM (compile flag chooses which)
-2) getTau -- fits waveforms to extract a single tau decay constant
-3) getRate -- counts LEDs to extract a rate for a given file (faster than full analysis)
-4) readGreta -- analyzes SFB processed events, i.e. energy + time + waveform snippet for all segments in a crystal in one event
+See `/Users/heather/GRETAAnalysis/README.md` for full build and workflow docs. Quick reference:
+
+```bash
+scons readGreta trackGreta
+
+# Pass 1
+./readGreta -f <data> -rootFile out.root
+
+# Pass 2
+./trackGreta -i out.root -o tracked.root -trackingChat tracking/greta_readGreta.chat
+
+# Parallel pass 2
+./scripts/trackGretaParallel.sh -j 8 -i out.root -o tracked.root \
+    -trackingChat tracking/greta_readGreta.chat
+```

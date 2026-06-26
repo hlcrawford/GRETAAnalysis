@@ -26,6 +26,7 @@ class controlVariables : public TObject {
   Int_t config;
   Int_t holeNum;
   Int_t calibrationRun;
+  Int_t hfc;
   
  public:
   controlVariables();

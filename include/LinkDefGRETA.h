@@ -25,7 +25,20 @@
 #pragma link C++ class vector<g2IntPts>+;
 #pragma link C++ class vector<g2CrystalEvent>+;
 
+#pragma link C++ class vector<Float_t>+;
+#pragma link C++ class vector<Long64_t>+;
+#pragma link C++ class vector<Int_t>+;
+
+#pragma link C++ class TVector3+;
+#pragma link C++ class std::vector<TVector3>+;
+#pragma link C++ class vector<TVector3>+;
+
 #pragma link C++ class gHistos+;
+
+#pragma link C++ class GretaTrackedGamma+;
+#pragma link C++ class std::vector<GretaTrackedGamma>+;
+#pragma link C++ class vector<GretaTrackedGamma>+;
+#pragma link C++ class GretaTrackedEvent+;
 
 #pragma link C++ class GRETA+;
 

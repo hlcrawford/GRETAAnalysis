@@ -11,6 +11,7 @@
 #include "TH1F.h"
 #include "TGraph.h"
 #include "SortingStructures.h"
+#include "GretaTracked.h"
 
 #include <vector>
 #include <stdint.h>
@@ -210,6 +211,7 @@ class g2CrystalEvent : public TObject {
   int16_t  t_ovfl;       /* time offset since last overflow */
   int16_t  t_rst;        /* time offset since last reset */
   int16_t errorCode; /* error code from first fit */
+  Float_t doppler;
   vector<g2IntPts> intPts;
   vector<int16_t> tr[NUM_CHAN];
   
@@ -217,7 +219,7 @@ class g2CrystalEvent : public TObject {
   g2CrystalEvent() { ; }
   ~g2CrystalEvent() { ; }
   void Reset();
-  TVector3 maxIntPtXYZLab();
+  TVector3 maxIntPtXYZLab() const;
   Double_t maxIntPtX();
   Double_t maxIntPtY();
   Double_t maxIntPtR();
@@ -290,6 +292,9 @@ class GRETA : public TObject {
   g3OUT g3Out;
   g2OUT g2Out;
 
+  /** Per-event tracked gamma rays (filled when tracking is enabled). */
+  GretaTrackedEvent tracked;
+
   gHistos gHist;
   
   uint64_t ng2;
@@ -327,8 +332,10 @@ class GRETA : public TObject {
   uint64_t hton64(uint64_t input);
   void readGRETACalibration(TString filename);
   void fillHistos();
-  
- public:
+  Float_t getDopplerSimple(TVector3 xyz, Float_t beta) const;
+  /** Set doppler on g2 crystals (max-int lab point) and tracked gammas (x0 lab mm). */
+  void applyDopplerCorrection(Float_t beta = 0.024f);
+
   ClassDef(GRETA, 1);
 };
 

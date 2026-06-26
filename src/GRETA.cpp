@@ -5,6 +5,13 @@
 
 ClassImp(rotationMatrix);
 ClassImp(gretaWaveformMsg);
+ClassImp(g3CrystalEvent);
+ClassImp(g3OUT);
+ClassImp(g2IntPts);
+ClassImp(g2CrystalEvent);
+ClassImp(g2OUT);
+ClassImp(gHistos);
+ClassImp(GRETA);
 
 /*********************************************************************************/
 
@@ -431,6 +438,17 @@ TVector3 rotationMatrix::crys2Lab(Int_t crystalID, TVector3 xyz) {
 
   crystalNumber -= 1; // Crystal numbers need to be 0..3
 
+  if (crystalID > 40 && crystalID <=80) {
+    if (crystalNumber == 0) { crystalNumber = 2; }
+    else if (crystalNumber == 1) { crystalNumber = 3; }
+    else if (crystalNumber == 2) { crystalNumber = 0; }
+    else if (crystalNumber == 3) { crystalNumber = 1; }
+  }
+
+  //  if (crystalID == 22) {
+  //  printf("xyz Original %f, %f, %f\n", xyz.X(), xyz.Y(), xyz.Z());
+  // }
+  
   TVector3 xyzLab;
   xyzLab.SetX((Double_t)((crmat[detectorPosition][crystalNumber][0][0] * xyz.X()) +
 			 (crmat[detectorPosition][crystalNumber][0][1] * xyz.Y()) +
@@ -466,6 +484,23 @@ uint64_t GRETA::ntoh64(uint64_t input) {
 
 uint64_t GRETA::hton64(uint64_t input) {
   return (ntoh64(input));
+}
+
+Float_t GRETA::getDopplerSimple(TVector3 xyz, Float_t beta) const {
+  if (xyz.Mag2() <= 0.f) return 1.f;
+  const Float_t cosDop = xyz.CosTheta();
+  const Float_t gamma = 1.f / TMath::Sqrt(1.f - beta * beta);
+  return gamma * (1.f - beta * cosDop);
+}
+
+void GRETA::applyDopplerCorrection(Float_t beta) {
+  for (UInt_t i = 0; i < g2Out.crystalMult(); i++) {
+    g2Out.xtals[i].doppler = getDopplerSimple(g2Out.xtals[i].maxIntPtXYZLab(), beta);
+  }
+  for (size_t i = 0; i < tracked.gammas.size(); i++) {
+    GretaTrackedGamma &g = tracked.gammas[i];
+    g.doppler = getDopplerSimple(TVector3(g.x0_mm, g.y0_mm, g.z0_mm), beta);
+  }
 }
 
 void GRETA::readGRETACalibration(TString filename) {
@@ -559,7 +594,7 @@ void g2CrystalEvent::Reset() {
   }
 }
 
-TVector3 g2CrystalEvent::maxIntPtXYZLab() {
+TVector3 g2CrystalEvent::maxIntPtXYZLab() const {
   Float_t maxE = 0; Int_t max = -1;
   for (Int_t i=0; i<intPts.size(); i++) {
     if (intPts[i].e > maxE) {
@@ -760,6 +795,7 @@ void GRETA::Reset() {
 
   g2X.Clear();
   g2Out.Reset();
+  tracked.Reset();
 }
 
 void GRETA::ReadSegmentCenters(TString filename) {
@@ -976,11 +1012,15 @@ Int_t GRETA::getMode2(FILE *inf, Int_t evtLength, Int_t subType) {
     printf("Length remaining for intpts: %lu\n", evtLength - sizeof(gretaIntPtMsg));
   } 
 
-  vector<intPtFit> intPtFits;
-  vector<intPt> intpts;
+  static vector<intPtFit> intPtFits;
+  static vector<intPt> intpts;
+  intPtFits.clear();
+  intpts.clear();
+  intPtFits.reserve(static_cast<size_t>(ipmsg.num_fits));
+
   intPtFit ipfit;
   intPt ip;
-  
+
   for (Int_t i=0; i<ipmsg.num_fits; i++) {
     siz = fread(&ipfit, 1, sizeof(intPtFit), inf);
     intPtFits.push_back(ipfit);
@@ -994,7 +1034,7 @@ Int_t GRETA::getMode2(FILE *inf, Int_t evtLength, Int_t subType) {
   }
   
   g2X.Reset();
-  g2X.id = ipmsg.id;
+  g2X.id = subType;
   // g2X.trigSrc = ntohs(ipmsg.trig_src);
   g2X.timestamp = ipmsg.timestamp;
   // g2X.pileup = ntoh64((uint64_t)ipmsg.pileup);
@@ -1008,17 +1048,21 @@ Int_t GRETA::getMode2(FILE *inf, Int_t evtLength, Int_t subType) {
     }
   }
   
-  //  g2X.t0 = ntohs(wform.t0);
-  //  g2X.subt0 = ntohs(wform.sub_t0);
-  //  g2X.tLEDCore = ntohs(wform.t_led_core);
-  //  g2X.tCFDCore = ntohs(wform.t_cfd_core);
+  g2X.t0 = ipmsg.t0;
+  g2X.sub_t0 = ipmsg.sub_t0;
+  g2X.t_led_core = ipmsg.t_led_core;
+  g2X.t_cfd_core = ipmsg.t_cfd_core;
   //  g2X.tLEDFirst = ntohs(wform.t_led_first);
   g2X.num_fits = ipmsg.num_fits;
+  g2X.trig_src = ipmsg.trig_src;
   
   Int_t ipIndex = 0;
+  Int_t maxIndex = -1; Double_t maxE =  0;
   for (Int_t i=0; i<ipmsg.num_fits; i++) {
-    g2X.errorCode = ipfit.errorCode;
-    for (Int_t j=0; j<ipfit.num_interactions; j++) {
+    const intPtFit &fit = intPtFits[i];
+    g2X.errorCode = fit.errorCode;
+    // if (subType==22) { printf("error code %d, inpts %d, chisq %f\n", g2X.errorCode, fit.num_interactions, fit.chisq); }
+    for (Int_t j=0; j<fit.num_interactions; j++) {
       g2Xip.Clear();
       g2Xip.ir = (intpts[ipIndex].ir);
       g2Xip.ip = (intpts[ipIndex].ip);
@@ -1028,6 +1072,7 @@ Int_t GRETA::getMode2(FILE *inf, Int_t evtLength, Int_t subType) {
       g2Xip.xyzLab = rot.crys2Lab(subType, g2Xip.xyzCrystal);
       g2Xip.xyzLabSeg = rot.crys2Lab(subType, TVector3(segCenter[subType%2][0][g2Xip.seg], segCenter[subType%2][1][g2Xip.seg], segCenter[subType%2][2][g2Xip.seg]));
       g2Xip.e = (intpts[ipIndex].e);
+      if (g2Xip.e > maxE) { maxE = g2Xip.e;  maxIndex = ipIndex; }
       g2X.intPts.push_back(g2Xip);
       ipIndex++;
       if (DEBUG) {
@@ -1035,6 +1080,8 @@ Int_t GRETA::getMode2(FILE *inf, Int_t evtLength, Int_t subType) {
       }
     }
   }
+
+  /* doppler filled once per coincidence in applyDopplerCorrection() */
 
   /* Mode 2+3 appends the waveform to the Mode2 basically */
 
